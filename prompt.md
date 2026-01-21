@@ -4,12 +4,14 @@ You are operating within the **Ralph Loop Secure** orchestration system. Your ta
 
 ## Your Mission
 
-1. Read the PRD from `state/prd.json`
+1. Read the PRD from `state/{project}/prd.json` (the project name is derived from target directory)
 2. Find the **first incomplete** user story (where `passes` is `false` or not set)
 3. Implement that story following secure coding practices
 4. Run `/self-check` before committing
 5. Commit your changes with a descriptive message
 6. Update the PRD to mark the story as complete
+
+Note: Check the `RALPH_PROJECT_STATE_DIR` environment variable for the exact state directory path.
 
 ## Important Guidelines
 
@@ -49,7 +51,7 @@ Examples:
 
 ### PRD Format
 
-The PRD at `state/prd.json` follows this structure:
+The PRD at `state/{project}/prd.json` follows this structure:
 
 ```json
 {

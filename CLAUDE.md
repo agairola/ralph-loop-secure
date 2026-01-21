@@ -63,12 +63,14 @@ result = ast.literal_eval(safe_input)
 
 ## Workflow
 
-1. **Read PRD** - `state/prd.json` contains user stories
+1. **Read PRD** - `state/{project}/prd.json` contains user stories
 2. **Find incomplete story** - where `passes` is `false`
 3. **Implement securely** - follow security requirements above
 4. **Self-check** - run `/self-check` before committing
 5. **Commit** - one story per commit
 6. **Update PRD** - set `passes: true` for completed story
+
+Note: The `{project}` placeholder is automatically derived from your target directory name, or can be set explicitly with `--project`.
 
 ## If Security Scan Fails
 
@@ -106,10 +108,22 @@ Quick status check of PRD progress.
 
 ## File Locations
 
+All paths below with `{project}` are per-project (e.g., `state/my-app/prd.json`).
+
 | File | Purpose |
 |------|---------|
-| `state/prd.json` | User stories to implement |
-| `state/security-context.md` | Injected when remediation needed |
-| `state/security-audit.jsonl` | Audit log (don't modify) |
+| `state/{project}/prd.json` | User stories to implement |
+| `state/{project}/security-context.md` | Injected when remediation needed |
+| `state/{project}/security-audit.jsonl` | Audit log (don't modify) |
+| `state/{project}/operations.jsonl` | Tool operation log |
 | `prompt.md` | Base instructions |
 | `config/thresholds.json` | Scan thresholds |
+
+## Environment Variables
+
+When running inside the loop, these environment variables are available:
+
+| Variable | Description |
+|----------|-------------|
+| `RALPH_PROJECT_NAME` | Current project name |
+| `RALPH_PROJECT_STATE_DIR` | Full path to project state directory |

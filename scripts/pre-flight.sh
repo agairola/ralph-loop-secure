@@ -8,6 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -105,16 +106,21 @@ check_file "$PROJECT_DIR/config/thresholds.json" "optional"
 
 echo ""
 echo "--- PRD File ---"
-if [ -f "$PROJECT_DIR/state/prd.json" ]; then
-    echo -e "${GREEN}[OK]${NC} PRD file exists at state/prd.json"
+if [ -n "$RALPH_PROJECT_NAME" ]; then
+    echo -e "${GREEN}[INFO]${NC} Project: $RALPH_PROJECT_NAME"
+    echo -e "${GREEN}[INFO]${NC} State directory: $STATE_DIR"
+fi
+
+if [ -f "$STATE_DIR/prd.json" ]; then
+    echo -e "${GREEN}[OK]${NC} PRD file exists at $STATE_DIR/prd.json"
 
     # Validate JSON structure
-    if jq empty "$PROJECT_DIR/state/prd.json" 2>/dev/null; then
+    if jq empty "$STATE_DIR/prd.json" 2>/dev/null; then
         echo -e "${GREEN}[OK]${NC} PRD is valid JSON"
 
         # Check for required fields
-        if jq -e '.userStories' "$PROJECT_DIR/state/prd.json" > /dev/null 2>&1; then
-            STORY_COUNT=$(jq '.userStories | length' "$PROJECT_DIR/state/prd.json")
+        if jq -e '.userStories' "$STATE_DIR/prd.json" > /dev/null 2>&1; then
+            STORY_COUNT=$(jq '.userStories | length' "$STATE_DIR/prd.json")
             echo -e "${GREEN}[OK]${NC} PRD has $STORY_COUNT user stories"
         else
             echo -e "${RED}[FAIL]${NC} PRD missing 'userStories' array"
@@ -125,8 +131,8 @@ if [ -f "$PROJECT_DIR/state/prd.json" ]; then
         ERRORS=$((ERRORS + 1))
     fi
 else
-    echo -e "${YELLOW}[INFO]${NC} No PRD file at state/prd.json"
-    echo "       Copy prd.json.example to state/prd.json and customize"
+    echo -e "${YELLOW}[INFO]${NC} No PRD file at $STATE_DIR/prd.json"
+    echo "       Copy prd.json.example to $STATE_DIR/prd.json and customize"
 fi
 
 echo ""

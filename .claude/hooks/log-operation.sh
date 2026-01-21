@@ -6,10 +6,12 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
-LOG_FILE="$PROJECT_DIR/state/operations.jsonl"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
+PROJECT_NAME="${RALPH_PROJECT_NAME:-unknown}"
+LOG_FILE="$STATE_DIR/operations.jsonl"
 
 # Ensure state directory exists
-mkdir -p "$PROJECT_DIR/state"
+mkdir -p "$STATE_DIR"
 
 # Get tool name and input from arguments
 TOOL_NAME="${1:-unknown}"
@@ -39,7 +41,7 @@ ESCAPED_INPUT=$(escape_json "$TOOL_INPUT")
 
 # Create JSON entry (removing outer quotes from escaped input since it's already a JSON string)
 JSON_ENTRY=$(cat <<EOF
-{"timestamp":"$TIMESTAMP","tool":"$TOOL_NAME","input":$ESCAPED_INPUT,"git_branch":"$GIT_BRANCH","git_commit":"$GIT_COMMIT","pid":$$}
+{"timestamp":"$TIMESTAMP","project":"$PROJECT_NAME","tool":"$TOOL_NAME","input":$ESCAPED_INPUT,"git_branch":"$GIT_BRANCH","git_commit":"$GIT_COMMIT","pid":$$}
 EOF
 )
 

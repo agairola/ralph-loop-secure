@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-STATE_DIR="$PROJECT_DIR/state"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
 
 # Arguments
 SEMGREP_RESULT="${1:-UNKNOWN}"

@@ -9,7 +9,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 RULES_DIR="$PROJECT_DIR/rules"
-STATE_DIR="$PROJECT_DIR/state"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
 
 # Files to scan (passed as argument or from git diff)
 FILES="$1"

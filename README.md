@@ -31,12 +31,9 @@ pip install semgrep
 npm install -g snyk && snyk auth
 brew install jq
 
-# 2. Set up your PRD
-cp prd.json.example state/prd.json
-# Edit state/prd.json with your user stories
-
-# 3. Run the loop
-./ralph-secure.sh
+# 2. Run the loop (PRD is auto-initialized from template)
+./ralph-secure.sh 10 /path/to/my-project
+# Edit state/my-project/prd.json with your user stories
 ```
 
 ## Prerequisites
@@ -52,18 +49,46 @@ cp prd.json.example state/prd.json
 ## Usage
 
 ```bash
-# Basic usage (10 iterations max)
+# Basic usage (10 iterations max, current directory)
 ./ralph-secure.sh
 
-# Custom iteration limit
-./ralph-secure.sh 20
+# Target a specific directory (auto-derives project name)
+./ralph-secure.sh 10 /path/to/my-app
+# Creates state/my-app/ with prd.json
 
-# Target a specific directory
-./ralph-secure.sh 10 /path/to/project
+# Explicit project name
+./ralph-secure.sh --project my-app --target /path/to/project
+
+# Short form
+./ralph-secure.sh -p my-app -t /path/to/project -m 10
 
 # Skip Docker sandbox (for testing)
 RALPH_SKIP_DOCKER=true ./ralph-secure.sh
 ```
+
+### Multi-Project Support
+
+Ralph Loop Secure supports running multiple projects in parallel with isolated state:
+
+```bash
+# Project A (terminal 1)
+./ralph-secure.sh 10 /path/to/project-a
+# State stored in: state/project-a/
+
+# Project B (terminal 2)
+./ralph-secure.sh 10 /path/to/project-b
+# State stored in: state/project-b/
+
+# Override project name if needed
+./ralph-secure.sh --project custom-name --target /path/to/project
+# State stored in: state/custom-name/
+```
+
+Each project gets its own:
+- `prd.json` - User stories
+- `security-audit.jsonl` - Audit trail
+- Session/branch tracking files
+- Escalation reports
 
 ### Environment Variables
 
@@ -73,6 +98,13 @@ RALPH_SKIP_DOCKER=true ./ralph-secure.sh
 | `RALPH_SKIP_DOCKER` | Run without Docker sandbox | false |
 | `RALPH_SLACK_WEBHOOK` | Slack webhook for notifications | - |
 | `RALPH_CREATE_ISSUE` | Create GitHub issue on escalation | false |
+
+The following are exported for child scripts:
+
+| Variable | Description |
+|----------|-------------|
+| `RALPH_PROJECT_NAME` | Current project name (derived or explicit) |
+| `RALPH_PROJECT_STATE_DIR` | Full path to project's state directory |
 
 ## How It Works
 
@@ -114,7 +146,7 @@ All operations are logged to `state/security-audit.jsonl` in JSON Lines format f
 
 ## PRD Format
 
-Create your PRD at `state/prd.json`:
+Create your PRD at `state/{project}/prd.json` (auto-initialized from `prd.json.example`):
 
 ```json
 {
@@ -184,9 +216,16 @@ ralph-loop-secure/
 │   └── thresholds.json
 │
 └── state/                       # Runtime state (gitignored)
-    ├── prd.json
-    ├── security-audit.jsonl
-    └── ...
+    ├── .gitkeep                 # Keeps directory in git
+    ├── my-app/                  # Per-project state (auto-created)
+    │   ├── prd.json
+    │   ├── security-audit.jsonl
+    │   ├── operations.jsonl
+    │   ├── .session-branch
+    │   ├── .original-branch
+    │   └── escalation-report-*.md
+    └── another-project/         # Multiple projects supported
+        └── ...
 ```
 
 ## Customization
@@ -260,7 +299,7 @@ If Claude keeps producing the same vulnerable code:
 ### Escalation triggered
 
 When human review is needed:
-1. Check `state/escalation-report-*.md`
+1. Check `state/{project}/escalation-report-*.md`
 2. Review the security findings
 3. Manually fix the issues
 4. Re-run the loop

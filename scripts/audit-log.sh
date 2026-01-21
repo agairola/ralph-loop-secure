@@ -8,7 +8,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-STATE_DIR="$PROJECT_DIR/state"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
+PROJECT_NAME="${RALPH_PROJECT_NAME:-unknown}"
 AUDIT_LOG="$STATE_DIR/security-audit.jsonl"
 
 # Ensure state directory exists
@@ -53,6 +54,7 @@ fi
 # Build JSON entry
 JSON_ENTRY=$(jq -n \
     --arg timestamp "$TIMESTAMP" \
+    --arg project "$PROJECT_NAME" \
     --arg iteration "$ITERATION" \
     --arg status "$STATUS" \
     --arg semgrep "$SEMGREP_RESULT" \
@@ -65,6 +67,7 @@ JSON_ENTRY=$(jq -n \
     --argjson snyk_findings "${SNYK_FINDINGS:-null}" \
     '{
         timestamp: $timestamp,
+        project: $project,
         iteration: ($iteration | tonumber),
         status: $status,
         scans: {

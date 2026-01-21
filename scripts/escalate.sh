@@ -8,7 +8,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-STATE_DIR="$PROJECT_DIR/state"
+STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
+PROJECT_NAME="${RALPH_PROJECT_NAME:-unknown}"
 
 # Arguments
 ITERATION="${1:-0}"
@@ -39,6 +40,7 @@ The automated security remediation loop has been exhausted without resolving all
 
 | Field | Value |
 |-------|-------|
+| Project | $PROJECT_NAME |
 | Iteration | $ITERATION |
 | Branch | $GIT_BRANCH |
 | Commit | $GIT_COMMIT |
@@ -109,6 +111,7 @@ echo "============================================="
 echo "  SECURITY ESCALATION - HUMAN REVIEW NEEDED"
 echo "============================================="
 echo ""
+echo "Project: $PROJECT_NAME"
 echo "Iteration: $ITERATION"
 echo "Branch: $GIT_BRANCH"
 echo "Result: $SCAN_RESULT"
@@ -135,14 +138,14 @@ fi
 SLACK_WEBHOOK="${RALPH_SLACK_WEBHOOK:-}"
 if [ -n "$SLACK_WEBHOOK" ]; then
     curl -s -X POST -H 'Content-type: application/json' \
-        --data "{\"text\":\":rotating_light: *Security Escalation* - Branch: $GIT_BRANCH - $SCAN_RESULT\"}" \
+        --data "{\"text\":\":rotating_light: *Security Escalation* - Project: $PROJECT_NAME - Branch: $GIT_BRANCH - $SCAN_RESULT\"}" \
         "$SLACK_WEBHOOK" > /dev/null 2>&1 || true
 fi
 
 # 5. GitHub Issue (if gh is available and configured)
 if command -v gh &> /dev/null && [ "${RALPH_CREATE_ISSUE:-false}" = "true" ]; then
     gh issue create \
-        --title "Security Escalation: $GIT_BRANCH" \
+        --title "Security Escalation: [$PROJECT_NAME] $GIT_BRANCH" \
         --body "$(cat "$REPORT_FILE")" \
         --label "security,escalation" 2>/dev/null || true
 fi
