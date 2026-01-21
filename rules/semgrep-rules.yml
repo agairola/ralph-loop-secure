@@ -1,0 +1,263 @@
+rules:
+  # ===========================================
+  # SECRETS & CREDENTIALS
+  # ===========================================
+
+  - id: hardcoded-secret-generic
+    patterns:
+      - pattern-regex: '(?i)(api[_-]?key|password|passwd|secret|token|auth[_-]?token|bearer|access[_-]?key|private[_-]?key)\s*[=:]\s*["\'][A-Za-z0-9+/=_-]{16,}["\']'
+    message: "Potential hardcoded secret detected. Use environment variables instead."
+    severity: ERROR
+    languages: [generic]
+    metadata:
+      category: security
+      subcategory: secrets
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: aws-credentials
+    patterns:
+      - pattern-regex: '(?i)(AKIA[0-9A-Z]{16})'
+      - pattern-regex: '(?i)aws[_-]?(secret[_-]?access[_-]?key|access[_-]?key[_-]?id)\s*[=:]\s*["\'][A-Za-z0-9+/]{20,}["\']'
+    message: "AWS credentials detected. Never commit AWS keys."
+    severity: ERROR
+    languages: [generic]
+    metadata:
+      category: security
+      subcategory: secrets
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: private-key
+    patterns:
+      - pattern-regex: '-----BEGIN (RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'
+    message: "Private key detected in source code."
+    severity: ERROR
+    languages: [generic]
+    metadata:
+      category: security
+      subcategory: secrets
+
+  # ===========================================
+  # INJECTION VULNERABILITIES
+  # ===========================================
+
+  - id: python-sql-injection-format
+    patterns:
+      - pattern: |
+          $QUERY = f"...$VAR..."
+          ...
+          $CURSOR.execute($QUERY)
+      - pattern: |
+          $QUERY = "..." % $VAR
+          ...
+          $CURSOR.execute($QUERY)
+      - pattern: |
+          $QUERY = "..." + $VAR
+          ...
+          $CURSOR.execute($QUERY)
+    message: "Potential SQL injection. Use parameterized queries: cursor.execute('SELECT * FROM table WHERE col = ?', (value,))"
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-89: SQL Injection"
+
+  - id: python-command-injection-shell-true
+    patterns:
+      - pattern: subprocess.run($CMD, shell=True, ...)
+      - pattern: subprocess.call($CMD, shell=True, ...)
+      - pattern: subprocess.Popen($CMD, shell=True, ...)
+    message: "Command injection risk with shell=True. Use shell=False and pass arguments as a list."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: python-command-injection-os-system
+    patterns:
+      - pattern: os.system($CMD)
+      - pattern: os.popen($CMD)
+    message: "os.system/popen is vulnerable to command injection. Use subprocess with shell=False."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: js-sql-injection
+    patterns:
+      - pattern: $DB.query(`...${$VAR}...`)
+      - pattern: $DB.execute(`...${$VAR}...`)
+    message: "Potential SQL injection. Use parameterized queries."
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-89: SQL Injection"
+
+  - id: js-command-injection
+    patterns:
+      - pattern: exec($CMD)
+      - pattern: execSync($CMD)
+      - pattern: spawn($CMD, { shell: true })
+    message: "Potential command injection. Avoid shell execution with user input."
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-78: OS Command Injection"
+
+  # ===========================================
+  # DANGEROUS FUNCTIONS
+  # ===========================================
+
+  - id: python-eval-usage
+    patterns:
+      - pattern: eval($X)
+      - pattern: exec($X)
+    message: "eval/exec is dangerous and can lead to code injection. Avoid if possible."
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: dangerous-function
+      cwe: "CWE-95: Eval Injection"
+
+  - id: js-eval-usage
+    patterns:
+      - pattern: eval($X)
+      - pattern: new Function($X)
+    message: "eval/Function constructor is dangerous. Avoid dynamic code execution."
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      subcategory: dangerous-function
+      cwe: "CWE-95: Eval Injection"
+
+  - id: python-pickle-load
+    patterns:
+      - pattern: pickle.load($X)
+      - pattern: pickle.loads($X)
+    message: "pickle.load is vulnerable to arbitrary code execution. Use safer alternatives like JSON."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: deserialization
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+
+  # ===========================================
+  # PATH TRAVERSAL
+  # ===========================================
+
+  - id: python-path-traversal
+    patterns:
+      - pattern: open(f"$PATH{$VAR}...")
+      - pattern: open($PATH + $VAR)
+    message: "Potential path traversal. Validate and sanitize file paths."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: path-traversal
+      cwe: "CWE-22: Path Traversal"
+
+  - id: js-path-traversal
+    patterns:
+      - pattern: fs.readFile(`$PATH${$VAR}...`)
+      - pattern: fs.readFileSync(`$PATH${$VAR}...`)
+    message: "Potential path traversal. Validate and sanitize file paths."
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      subcategory: path-traversal
+      cwe: "CWE-22: Path Traversal"
+
+  # ===========================================
+  # CRYPTOGRAPHY
+  # ===========================================
+
+  - id: weak-crypto-md5
+    patterns:
+      - pattern: hashlib.md5($X)
+      - pattern: crypto.createHash('md5')
+    message: "MD5 is cryptographically weak. Use SHA-256 or stronger."
+    severity: WARNING
+    languages: [python, javascript, typescript]
+    metadata:
+      category: security
+      subcategory: cryptography
+      cwe: "CWE-328: Use of Weak Hash"
+
+  - id: weak-crypto-sha1
+    patterns:
+      - pattern: hashlib.sha1($X)
+      - pattern: crypto.createHash('sha1')
+    message: "SHA1 is cryptographically weak for security purposes. Use SHA-256 or stronger."
+    severity: WARNING
+    languages: [python, javascript, typescript]
+    metadata:
+      category: security
+      subcategory: cryptography
+      cwe: "CWE-328: Use of Weak Hash"
+
+  # ===========================================
+  # DEBUG & DEVELOPMENT CODE
+  # ===========================================
+
+  - id: debug-print-password
+    patterns:
+      - pattern: print(..., $PASSWORD, ...)
+        metavariable-regex:
+          metavariable: $PASSWORD
+          regex: '(?i)(password|passwd|secret|token|key)'
+    message: "Logging potentially sensitive data. Remove before production."
+    severity: WARNING
+    languages: [python]
+    metadata:
+      category: security
+      subcategory: logging
+
+  - id: console-log-sensitive
+    patterns:
+      - pattern: console.log(..., $SENSITIVE, ...)
+        metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: '(?i)(password|passwd|secret|token|key|credential)'
+    message: "Logging potentially sensitive data. Remove before production."
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      subcategory: logging
+
+  # ===========================================
+  # RUST SPECIFIC
+  # ===========================================
+
+  - id: rust-unsafe-block
+    patterns:
+      - pattern: unsafe { ... }
+    message: "Unsafe block detected. Ensure memory safety is maintained."
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: security
+      subcategory: memory-safety
+
+  - id: rust-unwrap-in-production
+    patterns:
+      - pattern: $X.unwrap()
+    message: "unwrap() can panic. Consider using expect() with a message or proper error handling."
+    severity: WARNING
+    languages: [rust]
+    metadata:
+      category: quality
+      subcategory: error-handling

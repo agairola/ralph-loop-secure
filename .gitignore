@@ -1,0 +1,56 @@
+# Ralph Loop Secure - Git Ignore
+
+# ===========================================
+# STATE DIRECTORY (runtime data)
+# ===========================================
+
+# All runtime state files
+state/*
+
+# Keep the state directory itself (with .gitkeep)
+!state/.gitkeep
+
+# ===========================================
+# COMMON EXCLUSIONS
+# ===========================================
+
+# Node modules (if any)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# ===========================================
+# SECURITY-SENSITIVE FILES
+# ===========================================
+
+# Never commit these even if created accidentally
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json

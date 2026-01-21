@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "projectName": "Example Project",
+  "description": "A sample PRD demonstrating the expected format for Ralph Loop Secure",
+  "targetDirectory": ".",
+  "techStack": {
+    "language": "python",
+    "framework": "fastapi",
+    "database": "postgresql",
+    "testing": "pytest"
+  },
+  "securityRequirements": [
+    "All passwords must be hashed with bcrypt",
+    "All SQL queries must use parameterized queries",
+    "All user input must be validated",
+    "No hardcoded secrets allowed"
+  ],
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "User Registration",
+      "description": "As a new user, I want to register with my email and password so that I can access the application",
+      "acceptanceCriteria": [
+        "Email address is validated for proper format",
+        "Password meets minimum strength requirements (8+ chars, mixed case, numbers)",
+        "Password is hashed with bcrypt before storage",
+        "Duplicate email addresses are rejected with appropriate error",
+        "Registration returns a success message and user ID"
+      ],
+      "priority": "high",
+      "estimatedComplexity": "medium",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "User Login",
+      "description": "As a registered user, I want to log in with my credentials so that I can access protected resources",
+      "acceptanceCriteria": [
+        "Login accepts email and password",
+        "Invalid credentials return generic error (don't reveal if email exists)",
+        "Successful login returns JWT token",
+        "Token expires after 24 hours",
+        "Rate limiting prevents brute force attacks"
+      ],
+      "priority": "high",
+      "estimatedComplexity": "medium",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Password Reset",
+      "description": "As a user who forgot my password, I want to reset it securely",
+      "acceptanceCriteria": [
+        "User requests reset with email",
+        "Reset token is generated and stored securely",
+        "Reset token expires after 1 hour",
+        "Reset link is sent to email (mock for this example)",
+        "New password must meet strength requirements",
+        "Old sessions are invalidated after reset"
+      ],
+      "priority": "medium",
+      "estimatedComplexity": "medium",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "User Profile",
+      "description": "As a logged-in user, I want to view and update my profile",
+      "acceptanceCriteria": [
+        "Authenticated users can view their profile",
+        "Users can update their display name",
+        "Users cannot modify their email directly (requires verification)",
+        "Profile updates are validated",
+        "Unauthorized access returns 401"
+      ],
+      "priority": "low",
+      "estimatedComplexity": "low",
+      "passes": false,
+      "notes": ""
+    }
+  ],
+  "metadata": {
+    "createdAt": "2025-01-01T00:00:00Z",
+    "updatedAt": "2025-01-01T00:00:00Z",
+    "version": "1.0.0",
+    "author": "Example Author"
+  }
+}
