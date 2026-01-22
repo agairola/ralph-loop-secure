@@ -2,19 +2,16 @@
 #
 # Ralph Loop Secure - Security-hardened orchestration for Claude Code
 #
-# This script spawns Claude Code instances with built-in security validation.
-# Security scanning happens OUTSIDE Claude Code using external tools (Semgrep, Snyk).
+# This script spawns Claude Code instances that handle security scanning internally.
+# Claude runs /security-scan (ASH) to validate code before committing.
 #
 # Usage:
-#   ./ralph-secure.sh [max_iterations] [target_dir]
+#   ./ralph-secure.sh /path/to/project --max-iterations 10
 #   ./ralph-secure.sh --project my-app --target /path/to/project --max-iterations 10
 #   ./ralph-secure.sh -p my-app -t /path/to/project -m 10
 #
 # Environment Variables:
-#   RALPH_MAX_RETRIES    - Max remediation attempts per failure (default: 3)
 #   RALPH_SLACK_WEBHOOK  - Slack webhook for escalation notifications
-#   RALPH_CREATE_ISSUE   - Set to "true" to create GitHub issues on escalation
-#   RALPH_SKIP_DOCKER    - Set to "true" to run without Docker sandbox
 #
 
 set -e
@@ -69,10 +66,18 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            # Positional arguments (legacy support)
-            if [ -z "$MAX_ITERATIONS" ]; then
+            # Positional arguments - detect if it's a path or a number
+            if [[ "$1" =~ ^[0-9]+$ ]]; then
+                # It's a number - treat as max_iterations
                 MAX_ITERATIONS="$1"
-            elif [ -z "$TARGET_DIR" ]; then
+            elif [[ "$1" == /* ]] || [[ "$1" == .* ]] || [[ -d "$1" ]]; then
+                # It's a path - treat as target_dir
+                TARGET_DIR="$1"
+            elif [ -z "$MAX_ITERATIONS" ]; then
+                # Fallback: first unknown arg is max_iterations
+                MAX_ITERATIONS="$1"
+            else
+                # Fallback: second unknown arg is target_dir
                 TARGET_DIR="$1"
             fi
             shift
@@ -83,7 +88,6 @@ done
 # Apply defaults
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 TARGET_DIR="${TARGET_DIR:-.}"
-MAX_RETRIES=${RALPH_MAX_RETRIES:-3}
 
 # ===========================================
 # PROJECT NAME DERIVATION
@@ -128,6 +132,9 @@ initialize_project_state() {
             echo "Initialized $state_dir/prd.json from template"
         fi
     fi
+
+    # Create transcripts directory
+    mkdir -p "$state_dir/transcripts"
 }
 
 # Ensure base state directory exists
@@ -139,6 +146,7 @@ initialize_project_state "$PROJECT_STATE_DIR"
 # Export for child scripts
 export RALPH_PROJECT_NAME="$PROJECT_NAME"
 export RALPH_PROJECT_STATE_DIR="$PROJECT_STATE_DIR"
+export RALPH_TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 
 # Colors for output
 RED='\033[0;31m'
@@ -153,6 +161,39 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# ===========================================
+# TRANSCRIPT EXTRACTION
+# ===========================================
+
+extract_transcript() {
+    local iteration="$1"
+    local output_dir="$PROJECT_STATE_DIR/transcripts"
+
+    # Try to extract transcript using claude-code-transcripts
+    if command -v uvx &> /dev/null; then
+        log_info "Extracting transcript for iteration $iteration..."
+
+        # Extract latest session to HTML + JSON
+        uvx claude-code-transcripts local \
+            -o "$output_dir" \
+            --json \
+            --limit 1 2>/dev/null || true
+
+        # Rename to iteration-based filename if extraction succeeded
+        if [ -f "$output_dir/index.html" ]; then
+            mv "$output_dir/index.html" "$output_dir/iteration-${iteration}.html" 2>/dev/null || true
+            log_success "Transcript saved: transcripts/iteration-${iteration}.html"
+        fi
+
+        # Also save JSON if available
+        if [ -f "$output_dir/transcripts.json" ]; then
+            mv "$output_dir/transcripts.json" "$output_dir/iteration-${iteration}.json" 2>/dev/null || true
+        fi
+    else
+        log_warn "Transcript extraction skipped (uvx not available)"
+    fi
+}
 
 # Session summary - called on exit
 show_session_summary() {
@@ -177,7 +218,17 @@ show_session_summary() {
     elif [ "$exit_status" = "max_iterations" ]; then
         echo -e "  ${YELLOW}Status: Max iterations reached (incomplete stories remain)${NC}"
     else
-        echo -e "  ${RED}Status: Escalation required${NC}"
+        echo -e "  ${RED}Status: Session ended${NC}"
+    fi
+
+    # Show transcript locations
+    if [ -d "$PROJECT_STATE_DIR/transcripts" ]; then
+        TRANSCRIPT_COUNT=$(ls -1 "$PROJECT_STATE_DIR/transcripts"/*.html 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$TRANSCRIPT_COUNT" -gt 0 ]; then
+            echo ""
+            echo -e "  ${BLUE}Transcripts:${NC} $TRANSCRIPT_COUNT iteration(s) recorded"
+            echo -e "  ${BLUE}Location:${NC} $PROJECT_STATE_DIR/transcripts/"
+        fi
     fi
 
     echo ""
@@ -199,8 +250,9 @@ show_session_summary() {
 # Header
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║           Ralph Loop Secure - v1.0.0                       ║${NC}"
+echo -e "${CYAN}║           Ralph Loop Secure - v2.1.0                       ║${NC}"
 echo -e "${CYAN}║     Security-hardened Claude Code Orchestration            ║${NC}"
+echo -e "${CYAN}║     Security: ASH (Automated Security Helper)              ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -208,7 +260,6 @@ log_info "Project: $PROJECT_NAME"
 log_info "Max iterations: $MAX_ITERATIONS"
 log_info "Target directory: $TARGET_DIR"
 log_info "State directory: $PROJECT_STATE_DIR"
-log_info "Max retries per failure: $MAX_RETRIES"
 
 # ===========================================
 # PHASE 1: PRE-FLIGHT CHECKS
@@ -250,6 +301,10 @@ echo ""
 # PHASE 3: MAIN LOOP
 # ===========================================
 
+# Initialize session tracking file
+SESSION_IDS_FILE="$PROJECT_STATE_DIR/.session-ids"
+> "$SESSION_IDS_FILE"  # Clear/create file
+
 for i in $(seq 1 $MAX_ITERATIONS); do
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
@@ -257,17 +312,19 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    # Build prompt (base + any security context from previous failure)
-    PROMPT_CONTENT=$(cat "$SCRIPT_DIR/prompt.md")
-
-    if [ -f "$PROJECT_STATE_DIR/security-context.md" ]; then
-        log_warn "Security context detected - remediation mode"
-        PROMPT_CONTENT="$PROMPT_CONTENT
-
----
-
-$(cat "$PROJECT_STATE_DIR/security-context.md")"
+    # Extract current story being worked on
+    CURRENT_STORY_ID=""
+    CURRENT_STORY_TITLE=""
+    if [ -f "$PROJECT_STATE_DIR/prd.json" ]; then
+        CURRENT_STORY_ID=$(jq -r '.userStories[] | select(.passes == false or .passes == null) | .id' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null | head -1)
+        if [ -n "$CURRENT_STORY_ID" ]; then
+            CURRENT_STORY_TITLE=$(jq -r --arg id "$CURRENT_STORY_ID" '.userStories[] | select(.id == $id) | .title' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null)
+            log_info "Working on: $CURRENT_STORY_ID - $CURRENT_STORY_TITLE"
+        fi
     fi
+
+    # Build prompt (base only - Claude handles security scanning internally)
+    PROMPT_CONTENT=$(cat "$SCRIPT_DIR/prompt.md")
 
     # Track start time
     START_TIME=$(date +%s)
@@ -276,236 +333,125 @@ $(cat "$PROJECT_STATE_DIR/security-context.md")"
     # SPAWN CLAUDE CODE
     # ----------------------------------------
     log_info "Spawning Claude Code..."
+    log_info "Security scanning via /security-scan skill (ASH)"
+    echo ""
 
     CLAUDE_EXIT_CODE=0
 
-    if [ "${RALPH_SKIP_DOCKER:-false}" = "true" ]; then
-        # Run without Docker sandbox (for testing or when Docker unavailable)
-        log_warn "Running without Docker sandbox (RALPH_SKIP_DOCKER=true)"
-
-        cd "$TARGET_DIR"
-        claude --dangerously-skip-permissions \
-            --project-dir "$SCRIPT_DIR" \
-            -p "$PROMPT_CONTENT" || CLAUDE_EXIT_CODE=$?
-        cd - > /dev/null
-    else
-        # Run in Docker sandbox for isolation
-        # Note: docker sandbox run is a Docker Desktop 4.50+ feature
-        # If not available, fall back to regular docker run
-
-        if docker help 2>&1 | grep -q "sandbox"; then
-            docker sandbox run \
-                -w "$TARGET_DIR" \
-                -v "$SCRIPT_DIR:/ralph:ro" \
-                claude --dangerously-skip-permissions \
-                --project-dir /ralph \
-                -p "$PROMPT_CONTENT" || CLAUDE_EXIT_CODE=$?
-        else
-            # Fallback: run without sandbox feature
-            log_warn "Docker sandbox not available, running with volume mount"
-            docker run --rm -it \
-                -v "$TARGET_DIR:/workspace" \
-                -v "$SCRIPT_DIR:/ralph:ro" \
-                -w /workspace \
-                --network none \
-                node:20-slim \
-                npx -y @anthropic-ai/claude-code --dangerously-skip-permissions \
-                --project-dir /ralph \
-                -p "$PROMPT_CONTENT" || CLAUDE_EXIT_CODE=$?
-        fi
-    fi
+    cd "$TARGET_DIR"
+    # Use -p with --verbose --output-format stream-json for progress visibility
+    # Capture session_id from first JSON line, then continue streaming tool calls
+    claude --dangerously-skip-permissions \
+        --add-dir "$SCRIPT_DIR" \
+        -p "$PROMPT_CONTENT" \
+        --verbose \
+        --output-format stream-json 2>&1 | tee >(
+            # Extract session_id from first line and save it
+            head -1 | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p' >> "$SESSION_IDS_FILE"
+        ) | stdbuf -oL sed -n \
+            -e 's/.*"type":"tool_use".*"name":"\([^"]*\)".*/  [Tool] \1/p' \
+            -e 's/.*"type":"result".*"total_cost_usd":\([0-9.]*\).*/  [Done] Cost: $\1/p'
+    CLAUDE_EXIT_CODE=${PIPESTATUS[0]}
+    cd - > /dev/null
 
     # Track duration
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
     log_info "Claude Code session completed in ${DURATION}s (exit code: $CLAUDE_EXIT_CODE)"
 
-    # Clear security context after use
-    rm -f "$PROJECT_STATE_DIR/security-context.md"
-
-    # ----------------------------------------
-    # CHECK FOR CHANGES
-    # ----------------------------------------
-
-    cd "$TARGET_DIR"
-    CHANGED=$(git diff --name-only HEAD~1 2>/dev/null || echo "")
-    cd - > /dev/null
-
-    if [ -z "$CHANGED" ]; then
-        log_info "No changes detected in this iteration"
-
-        # Check completion status
-        if [ -f "$PROJECT_STATE_DIR/prd.json" ]; then
-            INCOMPLETE=$(jq '[.userStories[] | select(.passes == false or .passes == null)] | length' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null || echo "1")
-            if [ "$INCOMPLETE" = "0" ]; then
-                log_success "All stories complete!"
-                exit 0
-            fi
-            log_info "$INCOMPLETE stories remaining"
-        fi
-
-        continue
-    fi
-
-    log_info "Changed files:"
-    echo "$CHANGED" | while read -r f; do
-        echo "  - $f"
-    done
-
-    # ----------------------------------------
-    # EXTERNAL SECURITY SCAN (ON HOST)
-    # ----------------------------------------
-
-    echo ""
-    log_info "Running external security scans..."
-
-    # Run Semgrep
-    cd "$TARGET_DIR"
-    SEMGREP_RESULT=$("$SCRIPT_DIR/scripts/run-semgrep.sh" "$CHANGED" 2>&1) || true
-    cd - > /dev/null
-
-    if [[ "$SEMGREP_RESULT" == "PASS" ]]; then
-        log_success "Semgrep: PASS"
-    elif [[ "$SEMGREP_RESULT" == FAIL:* ]]; then
-        log_error "Semgrep: $SEMGREP_RESULT"
-    else
-        log_warn "Semgrep: $SEMGREP_RESULT"
-    fi
-
-    # Run Snyk (if dependency files changed)
-    SNYK_RESULT="SKIP:no_deps_changed"
-    if echo "$CHANGED" | grep -qE "(package\.json|package-lock\.json|Cargo\.toml|Cargo\.lock|requirements\.txt|pyproject\.toml|go\.mod|go\.sum)"; then
-        cd "$TARGET_DIR"
-        SNYK_RESULT=$("$SCRIPT_DIR/scripts/run-snyk.sh" "." 2>&1) || true
-        cd - > /dev/null
-
-        if [[ "$SNYK_RESULT" == "PASS" ]]; then
-            log_success "Snyk: PASS"
-        elif [[ "$SNYK_RESULT" == FAIL:* ]]; then
-            log_error "Snyk: $SNYK_RESULT"
-        else
-            log_warn "Snyk: $SNYK_RESULT"
-        fi
-    else
-        log_info "Snyk: Skipped (no dependency files changed)"
-    fi
-
     # ----------------------------------------
     # LOG RESULTS
     # ----------------------------------------
 
-    "$SCRIPT_DIR/scripts/audit-log.sh" "$i" "$SEMGREP_RESULT" "$SNYK_RESULT"
+    # Get git info for audit
+    cd "$TARGET_DIR"
+    CHANGED=$(git diff --name-only HEAD~1 2>/dev/null || echo "")
+    cd - > /dev/null
 
-    # ----------------------------------------
-    # DECISION GATE
-    # ----------------------------------------
+    # Log to audit (JSON Lines format)
+    # Security scan results are now internal to Claude's session (ASH runs inside Claude)
+    "$SCRIPT_DIR/scripts/audit-log.sh" \
+        "$i" \
+        "INTERNAL" \
+        "$CLAUDE_EXIT_CODE" \
+        "$DURATION" \
+        "$CURRENT_STORY_ID" \
+        "$CURRENT_STORY_TITLE" \
+        "$PROJECT_STATE_DIR/transcripts/iteration-${i}.html"
 
-    if [[ "$SEMGREP_RESULT" == "PASS" ]] && [[ "$SNYK_RESULT" == "PASS" || "$SNYK_RESULT" == SKIP:* ]]; then
-        log_success "Security scan PASSED"
-
-        # Check completion status
-        if [ -f "$PROJECT_STATE_DIR/prd.json" ]; then
-            INCOMPLETE=$(jq '[.userStories[] | select(.passes == false or .passes == null)] | length' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null || echo "1")
-            if [ "$INCOMPLETE" = "0" ]; then
-                echo ""
-                echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-                echo -e "${GREEN}║                    ALL STORIES COMPLETE!                    ║${NC}"
-                echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
-                show_session_summary "success"
-                exit 0
-            fi
-            log_info "$INCOMPLETE stories remaining"
-        fi
-
-        continue
+    # Log to progress (human-readable narrative)
+    if [ -f "$SCRIPT_DIR/scripts/log-progress.sh" ]; then
+        "$SCRIPT_DIR/scripts/log-progress.sh" \
+            "$i" \
+            "INTERNAL" \
+            "$DURATION" \
+            "$CURRENT_STORY_ID" \
+            "$CURRENT_STORY_TITLE"
     fi
 
     # ----------------------------------------
-    # SECURITY FAILURE - REMEDIATION LOOP
+    # CHECK COMPLETION
     # ----------------------------------------
 
-    log_warn "Security scan FAILED - entering remediation loop"
-
-    for retry in $(seq 1 $MAX_RETRIES); do
-        echo ""
-        log_info "Remediation attempt $retry of $MAX_RETRIES"
-
-        # Rollback the commit
-        cd "$TARGET_DIR"
-        "$SCRIPT_DIR/scripts/rollback.sh"
-        cd - > /dev/null
-
-        # Inject security context for next iteration
-        "$SCRIPT_DIR/scripts/inject-security-context.sh" "$SEMGREP_RESULT" "$SNYK_RESULT"
-
-        # Build remediation prompt
-        REMEDIATION_PROMPT=$(cat "$SCRIPT_DIR/prompt.md")
-        REMEDIATION_PROMPT="$REMEDIATION_PROMPT
-
----
-
-$(cat "$PROJECT_STATE_DIR/security-context.md")"
-
-        # Spawn Claude Code for remediation
-        log_info "Spawning Claude Code for remediation..."
-
-        if [ "${RALPH_SKIP_DOCKER:-false}" = "true" ]; then
-            cd "$TARGET_DIR"
-            claude --dangerously-skip-permissions \
-                --project-dir "$SCRIPT_DIR" \
-                -p "$REMEDIATION_PROMPT" || true
-            cd - > /dev/null
-        else
-            if docker help 2>&1 | grep -q "sandbox"; then
-                docker sandbox run \
-                    -w "$TARGET_DIR" \
-                    -v "$SCRIPT_DIR:/ralph:ro" \
-                    claude --dangerously-skip-permissions \
-                    --project-dir /ralph \
-                    -p "$REMEDIATION_PROMPT" || true
-            else
-                docker run --rm -it \
-                    -v "$TARGET_DIR:/workspace" \
-                    -v "$SCRIPT_DIR:/ralph:ro" \
-                    -w /workspace \
-                    --network none \
-                    node:20-slim \
-                    npx -y @anthropic-ai/claude-code --dangerously-skip-permissions \
-                    --project-dir /ralph \
-                    -p "$REMEDIATION_PROMPT" || true
-            fi
-        fi
-
-        # Re-scan
-        cd "$TARGET_DIR"
-        CHANGED=$(git diff --name-only HEAD~1 2>/dev/null || echo "")
-        SEMGREP_RESULT=$("$SCRIPT_DIR/scripts/run-semgrep.sh" "$CHANGED" 2>&1) || true
-        cd - > /dev/null
-
-        # Log remediation attempt
-        "$SCRIPT_DIR/scripts/audit-log.sh" "$i.$retry" "$SEMGREP_RESULT" "SKIP:remediation"
-
-        if [[ "$SEMGREP_RESULT" == "PASS" ]]; then
-            log_success "Remediation successful!"
-            rm -f "$PROJECT_STATE_DIR/security-context.md"
+    if [ -f "$PROJECT_STATE_DIR/prd.json" ]; then
+        INCOMPLETE=$(jq '[.userStories[] | select(.passes == false or .passes == null)] | length' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null || echo "1")
+        if [ "$INCOMPLETE" = "0" ]; then
+            ALL_STORIES_COMPLETE=true
             break
         fi
-
-        log_error "Remediation attempt $retry failed: $SEMGREP_RESULT"
-    done
-
-    # Check if remediation was successful
-    if [[ "$SEMGREP_RESULT" != "PASS" ]]; then
-        log_error "Remediation exhausted after $MAX_RETRIES attempts"
-        "$SCRIPT_DIR/scripts/escalate.sh" "$i" "$SEMGREP_RESULT"
-        show_session_summary "escalation"
-        exit 1
+        log_info "$INCOMPLETE stories remaining"
     fi
 
-    # Clean up
-    rm -f "$PROJECT_STATE_DIR/security-context.md"
-
 done
+
+# ----------------------------------------
+# EXTRACT TRANSCRIPTS FOR THIS SESSION
+# ----------------------------------------
+if [ -f "$SESSION_IDS_FILE" ] && [ -s "$SESSION_IDS_FILE" ]; then
+    ITERATION_COUNT=$(wc -l < "$SESSION_IDS_FILE" | tr -d ' ')
+    log_info "Extracting transcripts for $ITERATION_COUNT iteration(s)..."
+
+    # Derive Claude projects directory from target path
+    # Claude stores sessions in ~/.claude/projects/-{path-with-dashes}/
+    CLAUDE_PROJECTS_PATH="$HOME/.claude/projects/-$(echo "$RALPH_TARGET_DIR" | sed 's|^/||' | tr '/' '-')"
+
+    # Extract each session's transcript
+    TRANSCRIPT_INDEX=1
+    while read -r session_id; do
+        if [ -n "$session_id" ]; then
+            SESSION_FILE="$CLAUDE_PROJECTS_PATH/${session_id}.jsonl"
+            if [ -f "$SESSION_FILE" ]; then
+                uvx claude-code-transcripts json "$SESSION_FILE" \
+                    -o "$PROJECT_STATE_DIR/transcripts" \
+                    --json 2>/dev/null || true
+
+                # Rename to iteration-based filename if extraction succeeded
+                if [ -f "$PROJECT_STATE_DIR/transcripts/index.html" ]; then
+                    mv "$PROJECT_STATE_DIR/transcripts/index.html" "$PROJECT_STATE_DIR/transcripts/iteration-${TRANSCRIPT_INDEX}.html" 2>/dev/null || true
+                fi
+                # Keep the JSONL with session ID name (already copied by --json flag)
+            else
+                log_warn "Session file not found: $SESSION_FILE"
+            fi
+
+            TRANSCRIPT_INDEX=$((TRANSCRIPT_INDEX + 1))
+        fi
+    done < "$SESSION_IDS_FILE"
+
+    log_success "Transcripts saved to: $PROJECT_STATE_DIR/transcripts/"
+fi
+
+# ----------------------------------------
+# SESSION COMPLETION
+# ----------------------------------------
+if [ "${ALL_STORIES_COMPLETE:-false}" = "true" ]; then
+    echo ""
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                    ALL STORIES COMPLETE!                    ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+    show_session_summary "success"
+    exit 0
+fi
 
 echo ""
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"

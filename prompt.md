@@ -4,12 +4,17 @@ You are operating within the **Ralph Loop Secure** orchestration system. Your ta
 
 ## Your Mission
 
-1. Read the PRD from `state/{project}/prd.json` (the project name is derived from target directory)
-2. Find the **first incomplete** user story (where `passes` is `false` or not set)
-3. Implement that story following secure coding practices
-4. Run `/self-check` before committing
-5. Commit your changes with a descriptive message
-6. Update the PRD to mark the story as complete
+1. Run `/check` to verify PRD and git status
+2. Read the PRD from `state/{project}/prd.json` and `progress.txt` for context
+3. Find the **first incomplete** user story (where `passes` is `false` or not set)
+4. Implement **ONLY that one story** - do not proceed to others
+5. Stage changes: `git add -A`
+6. Run `/security-scan` (**MANDATORY** - do not skip)
+7. If PASS: commit, update PRD, update progress.txt, then **STOP**
+8. If FAIL: run `/fix-security`, re-scan (max 3 attempts)
+9. If still failing after 3 attempts: create GitHub issue, then **STOP**
+
+**CRITICAL: Complete exactly ONE user story per iteration. After committing (or escalating), STOP working. The orchestrator will spawn a new iteration if needed.**
 
 Note: Check the `RALPH_PROJECT_STATE_DIR` environment variable for the exact state directory path.
 
@@ -30,17 +35,20 @@ Note: Check the `RALPH_PROJECT_STATE_DIR` environment variable for the exact sta
 - Follow the existing code style in the project
 - Write tests for new functionality
 
-### Workflow
+### Workflow (ONE story per iteration)
 
-1. **Read the PRD** - understand what needs to be implemented
-2. **Check progress.txt** - read `state/{project}/progress.txt` for learnings from previous iterations
-3. **Explore the codebase** - understand existing patterns
-4. **Plan your approach** - think before coding
-5. **Implement incrementally** - small, focused changes
-6. **Self-check** - run `/self-check` before committing
-7. **Commit** - one commit per story with clear message
-8. **Update PRD** - mark the story as complete
-9. **Document learnings** - append to progress.txt (see below)
+1. **Check status** - run `/check` to verify PRD exists and git is clean
+2. **Read the PRD** - find the FIRST incomplete story (ONE only)
+3. **Read progress.txt** - learn from previous iterations at `state/{project}/progress.txt`
+4. **Explore the codebase** - understand existing patterns
+5. **Plan your approach** - think before coding
+6. **Implement** - optionally use `/code-review` during development
+7. **Stage changes** - `git add -A`
+8. **Quick check** - optionally run `/self-check` for syntax/lint
+9. **Security scan** - run `/security-scan` (MANDATORY)
+10. **If PASS** - commit, update PRD, update progress.txt
+11. **If FAIL** - run `/fix-security`, retry scan (max 3 attempts)
+12. **STOP** - your iteration is complete (do NOT start next story)
 
 ### Commit Messages
 
@@ -185,6 +193,22 @@ After completing a story and committing, **update the progress.txt file** with l
 - Keep learnings concise but actionable
 - Focus on things that would save time in future iterations
 
+## STOP After One Story
+
+**This is critical for the orchestration system to work correctly.**
+
+After you have:
+- Committed your changes and updated the PRD, OR
+- Escalated via GitHub issue after 3 failed security scans
+
+You MUST stop working. Do not:
+- Start the next user story
+- Make additional changes
+- Continue implementing features
+
+The orchestrator will automatically spawn a new iteration for the next story.
+Your session ends after ONE story is complete or escalated.
+
 ## Begin
 
-Read the PRD and start working on the first incomplete story. Focus on quality and security.
+Read the PRD and start working on the first incomplete story. Focus on quality and security. Remember: ONE story only, then STOP.
