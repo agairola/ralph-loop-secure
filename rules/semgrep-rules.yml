@@ -15,6 +15,36 @@ rules:
       subcategory: secrets
       cwe: "CWE-798: Use of Hard-coded Credentials"
 
+  - id: hardcoded-example-secret
+    pattern-regex: |
+      (?i)(api[_-]?key|secret[_-]?key|auth[_-]?token)\s*[=:]\s*["']EXAMPLE[_A-Z]+["']
+    message: "Hardcoded example/placeholder secret detected. Use environment variables instead."
+    severity: ERROR
+    languages:
+      - generic
+    metadata:
+      category: security
+      subcategory: secrets
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: js-hardcoded-config-secret
+    patterns:
+      - pattern: |
+          export const $CONFIG = {
+            ...
+            apiKey: "...",
+            ...
+          }
+    message: "Hardcoded API key in config export. Use process.env.API_KEY instead."
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: secrets
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
   - id: aws-access-key-id
     pattern-regex: "AKIA[0-9A-Z]{16}"
     message: "AWS Access Key ID detected. Never commit AWS keys."

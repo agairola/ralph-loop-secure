@@ -98,20 +98,21 @@ When `/security-scan` returns FAIL:
 
 ## Skills Reference
 
-### /code-review
-Security-focused code review before committing.
+**IMPORTANT: Use these EXACT skill names. Do NOT prefix with `ralph-loop:` or any other namespace.**
 
-### /self-check
-Pre-commit validation for code quality and security.
+| Skill | Purpose |
+|-------|---------|
+| `/check` | Quick status check of PRD progress |
+| `/security-scan` | Run ASH security scanner (MANDATORY before commit) |
+| `/code-review` | Security-focused code review before committing |
+| `/self-check` | Pre-commit validation for code quality and security |
+| `/fix-security` | Apply fixes based on scanner findings |
 
-### /security-scan
-Run ASH (Automated Security Helper) comprehensive security scanning. Includes Semgrep (SAST), Bandit (Python), Grype (SCA), detect-secrets, and Checkov (IaC). Run this BEFORE committing to validate code is secure.
+**Examples:**
+- Correct: `/security-scan`
+- Wrong: `ralph-loop:security-scan`
 
-### /fix-security
-Apply fixes based on scanner findings (used during remediation).
-
-### /check
-Quick status check of PRD progress.
+If a skill fails with "Unknown skill", ensure you're using the exact name without any prefix.
 
 ## Important Notes
 
@@ -131,7 +132,6 @@ All paths below with `{project}` are per-project (e.g., `state/my-app/prd.json`)
 | `state/{project}/progress.txt` | Learnings from previous iterations |
 | `state/{project}/security-audit.jsonl` | Audit log (don't modify) |
 | `state/{project}/transcripts/` | Session transcripts for each iteration |
-| `state/{project}/operations.jsonl` | Tool operation log |
 | `prompt.md` | Base instructions |
 | `.ash/ash.yaml` | ASH security scanner configuration |
 | `.ash/ash_output/` | ASH scan results (don't commit) |

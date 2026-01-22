@@ -7,60 +7,288 @@
 project_name: ralph-loop-secure
 
 global_settings:
+  # CRITICAL = only critical findings fail
+  # HIGH = critical + high fail
+  # MEDIUM = critical + high + medium fail (default)
+  # LOW = all findings fail
   severity_threshold: MEDIUM
   fail_on_findings: true
+
+  # Paths to exclude from all scanners
   ignore_paths:
-    - path: 'tests/test_data'
-      reason: 'Test data only'
+    # Dependencies & package managers
     - path: 'node_modules/**'
-      reason: 'Third-party dependencies'
+      reason: 'Third-party dependencies - scanned by grype/npm-audit instead'
+    - path: 'vendor/**'
+      reason: 'Vendored dependencies'
+    - path: '.pnpm/**'
+      reason: 'pnpm store'
+
+    # Python environments
     - path: 'venv/**'
       reason: 'Virtual environment'
     - path: '.venv/**'
       reason: 'Virtual environment'
     - path: '__pycache__/**'
       reason: 'Python cache'
+    - path: '*.pyc'
+      reason: 'Python bytecode'
+    - path: '.eggs/**'
+      reason: 'Python eggs'
+
+    # Build outputs
+    - path: 'dist/**'
+      reason: 'Build output'
+    - path: 'build/**'
+      reason: 'Build output'
+    - path: '.next/**'
+      reason: 'Next.js build output'
+    - path: 'out/**'
+      reason: 'Static export output'
+    - path: 'coverage/**'
+      reason: 'Test coverage reports'
+
+    # Tool directories
     - path: '.git/**'
       reason: 'Git directory'
     - path: '.ash/**'
       reason: 'ASH output directory'
+    - path: '.ash_output/**'
+      reason: 'ASH output directory (legacy)'
+
+    # Project-specific
     - path: 'state/**'
-      reason: 'State files'
+      reason: 'Ralph Loop state files'
+    - path: 'tests/fixtures/**'
+      reason: 'Test fixtures with intentional vulnerabilities'
+    - path: '**/*.test.ts'
+      reason: 'Test files'
+    - path: '**/*.spec.ts'
+      reason: 'Test files'
+    - path: '**/__tests__/**'
+      reason: 'Test directories'
 
 scanners:
+  # =========================================
   # SAST - Static Application Security Testing
+  # =========================================
+
   semgrep:
     enabled: true
     options:
-      # Use our custom rules in addition to ASH defaults
+      # Custom rules in addition to ASH defaults
       config_paths:
         - rules/semgrep-rules.yml
+      # Additional rulesets from Semgrep registry
+      rulesets:
+        - p/security-audit
+        - p/secrets
+        - p/owasp-top-ten
+      # Exclude test patterns from semgrep
+      exclude_patterns:
+        - '**/*.test.*'
+        - '**/*.spec.*'
+        - '**/test/**'
+      severity_threshold: WARNING
 
   bandit:
     enabled: true
     options:
-      confidence_level: high
+      confidence_level: medium  # low, medium, high
+      severity_level: medium    # low, medium, high
+      # Skip specific test IDs if needed
+      # skip_tests:
+      #   - B101  # assert_used
 
-  # IaC - Infrastructure as Code
+  # =========================================
+  # Infrastructure as Code (IaC) Security
+  # =========================================
+
   checkov:
     enabled: true
+    options:
+      # Frameworks to scan
+      frameworks:
+        - dockerfile
+        - kubernetes
+        - terraform
+        - cloudformation
+        - helm
+        - serverless
+      # Skip specific checks if needed
+      # skip_checks:
+      #   - CKV_DOCKER_2  # Healthcheck
+      compact: true
 
+  cfn-nag:
+    enabled: true
+    options:
+      # CloudFormation-specific deep analysis
+      fail_on_warnings: false
+
+  # =========================================
   # Secrets Detection
+  # =========================================
+
   detect-secrets:
     enabled: true
+    options:
+      # Baseline file for known false positives (relative to .ash/)
+      baseline_file: .ash/secrets.baseline
+      # Plugins to use
+      plugins:
+        - AWSKeyDetector
+        - ArtifactoryDetector
+        - AzureStorageKeyDetector
+        - BasicAuthDetector
+        - CloudantDetector
+        - DiscordBotTokenDetector
+        - GitHubTokenDetector
+        - Base64HighEntropyString
+        - HexHighEntropyString
+        - IbmCloudIamDetector
+        - IbmCosHmacDetector
+        - JwtTokenDetector
+        - KeywordDetector
+        - MailchimpDetector
+        - NpmDetector
+        - PrivateKeyDetector
+        - SendGridDetector
+        - SlackDetector
+        - SoftlayerDetector
+        - SquareOAuthDetector
+        - StripeDetector
+        - TwilioKeyDetector
 
-  # SCA - Software Composition Analysis (replaces Snyk)
+  # =========================================
+  # Software Composition Analysis (SCA)
+  # =========================================
+
   grype:
     enabled: true
     options:
       fail_on_severity: high
+      # Include all vulnerability sources
+      add_cpes_if_none: true
+      # Output format for detailed analysis
+      output_format: json
+
+  npm-audit:
+    enabled: true
+    options:
+      # critical, high, moderate, low
+      audit_level: moderate
+      # Include dev dependencies
+      include_dev: true
+      # Production only for stricter checks
+      # production_only: true
+
+  # =========================================
+  # SBOM & Compliance
+  # =========================================
+
+  syft:
+    enabled: true
+    options:
+      # SBOM output formats
+      output_formats:
+        - spdx-json
+        - cyclonedx-json
+      # Catalogers to use
+      catalogers:
+        - javascript
+        - python
+        - go
+        - rust
+
+# =========================================
+# Reporters - Output Formats
+# =========================================
 
 reporters:
+  # SARIF for IDE integration (VS Code, GitHub)
   sarif:
     enabled: true
+    options:
+      include_suppressed: false
+
+  # Human-readable markdown
   markdown:
     enabled: true
     options:
       include_detailed_findings: true
+      include_remediation: true
+      group_by_severity: true
+
+  # Visual HTML report
   html:
     enabled: true
+    options:
+      include_charts: true
+      dark_mode: false
+
+  # Machine-readable JSON
+  json:
+    enabled: true
+    options:
+      pretty_print: true
+
+  # CI/CD integration (GitHub Actions, Jenkins)
+  junit:
+    enabled: true
+    options:
+      include_passed: false
+
+# =========================================
+# Custom Rules & Overrides
+# =========================================
+
+custom_rules:
+  # Rule overrides - adjust severity or disable
+  overrides:
+    # Example: Downgrade specific rule to WARNING
+    # - rule_id: 'CKV_DOCKER_2'
+    #   new_severity: WARNING
+    #   reason: 'Healthcheck not required for this project'
+
+    # Example: Suppress false positive
+    # - rule_id: 'detect-secrets:KeywordDetector'
+    #   action: suppress
+    #   paths: ['config/example.yaml']
+    #   reason: 'Example config with placeholder values'
+
+  # Additional patterns to flag (regex)
+  custom_patterns:
+    - id: 'custom-todo-security'
+      pattern: '(?i)(TODO|FIXME).*security'
+      message: 'Security-related TODO found - address before release'
+      severity: WARNING
+
+    - id: 'custom-console-log'
+      pattern: 'console\.(log|debug|info)\('
+      message: 'Console logging detected - remove before production'
+      severity: INFO
+      languages:
+        - javascript
+        - typescript
+
+# =========================================
+# Execution Settings
+# =========================================
+
+execution:
+  # Execution mode: local, container, precommit
+  mode: local
+
+  # Parallel scanner execution
+  parallel: true
+  max_workers: 4
+
+  # Timeout per scanner (seconds)
+  scanner_timeout: 300
+
+  # Cache scan results
+  cache:
+    enabled: true
+    ttl_hours: 24
+    cache_dir: .ash/cache

@@ -4,15 +4,14 @@ You are operating within the **Ralph Loop Secure** orchestration system. Your ta
 
 ## Your Mission
 
-1. Run `/check` to verify PRD and git status
-2. Read the PRD from `state/{project}/prd.json` and `progress.txt` for context
-3. Find the **first incomplete** user story (where `passes` is `false` or not set)
-4. Implement **ONLY that one story** - do not proceed to others
-5. Stage changes: `git add -A`
-6. Run `/security-scan` (**MANDATORY** - do not skip)
-7. If PASS: commit, update PRD, update progress.txt, then **STOP**
-8. If FAIL: run `/fix-security`, re-scan (max 3 attempts)
-9. If still failing after 3 attempts: create GitHub issue, then **STOP**
+1. Read the PRD from `state/{project}/prd.json` and find the **first incomplete** user story (where `passes` is `false`)
+2. Read `progress.txt` for context from previous iterations
+3. Implement **ONLY that one story** - do not proceed to others
+4. Stage changes: `git add -A`
+5. Run `/security-scan` (**MANDATORY** - do not skip)
+6. If PASS: commit, update PRD, update progress.txt, then **STOP**
+7. If FAIL: run `/fix-security`, re-scan (max 3 attempts)
+8. If still failing after 3 attempts: create GitHub issue, then **STOP**
 
 **CRITICAL: Complete exactly ONE user story per iteration. After committing (or escalating), STOP working. The orchestrator will spawn a new iteration if needed.**
 
@@ -37,18 +36,17 @@ Note: Check the `RALPH_PROJECT_STATE_DIR` environment variable for the exact sta
 
 ### Workflow (ONE story per iteration)
 
-1. **Check status** - run `/check` to verify PRD exists and git is clean
-2. **Read the PRD** - find the FIRST incomplete story (ONE only)
-3. **Read progress.txt** - learn from previous iterations at `state/{project}/progress.txt`
-4. **Explore the codebase** - understand existing patterns
-5. **Plan your approach** - think before coding
-6. **Implement** - optionally use `/code-review` during development
-7. **Stage changes** - `git add -A`
-8. **Quick check** - optionally run `/self-check` for syntax/lint
-9. **Security scan** - run `/security-scan` (MANDATORY)
-10. **If PASS** - commit, update PRD, update progress.txt
-11. **If FAIL** - run `/fix-security`, retry scan (max 3 attempts)
-12. **STOP** - your iteration is complete (do NOT start next story)
+1. **Read the PRD** - find the FIRST incomplete story (ONE only)
+2. **Read progress.txt** - learn from previous iterations at `state/{project}/progress.txt`
+3. **Explore the codebase** - understand existing patterns
+4. **Plan your approach** - think before coding
+5. **Implement** - optionally use `/code-review` during development
+6. **Stage changes** - `git add -A`
+7. **Quick check** - optionally run `/self-check` for syntax/lint
+8. **Security scan** - run `/security-scan` (MANDATORY)
+9. **If PASS** - commit, update PRD, update progress.txt
+10. **If FAIL** - run `/fix-security`, retry scan (max 3 attempts)
+11. **STOP** - your iteration is complete (do NOT start next story)
 
 ### Commit Messages
 
@@ -86,11 +84,20 @@ After completing a story, update `passes` to `true`.
 
 ## Skills Available
 
-- `/code-review` - Security-focused code review
-- `/self-check` - Pre-commit validation
-- `/security-scan` - Run ASH (Automated Security Helper) for comprehensive security scanning
-- `/fix-security` - Apply security fixes (used during remediation)
-- `/check` - Quick status check
+**IMPORTANT: Use these EXACT skill names. Do NOT prefix with `ralph-loop:` or any other namespace.**
+
+| Skill | Name (use exactly) | Purpose |
+|-------|-------------------|---------|
+| Check | `/check` | Quick status check - verify PRD and git status |
+| Security Scan | `/security-scan` | Run ASH security scanner (MANDATORY before commit) |
+| Code Review | `/code-review` | Security-focused code review |
+| Self Check | `/self-check` | Pre-commit validation for syntax/lint |
+| Fix Security | `/fix-security` | Apply security fixes based on scan findings |
+
+**Wrong:** `ralph-loop:security-scan`, `ralph-loop:check`
+**Correct:** `/security-scan`, `/check`
+
+If a skill invocation fails with "Unknown skill", verify you're using the exact name from the table above without any prefix.
 
 ## Security-First Workflow
 

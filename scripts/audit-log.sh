@@ -36,8 +36,12 @@ GIT_COMMIT=$(cd "$TARGET_DIR" && git rev-parse HEAD 2>/dev/null || echo "unknown
 GIT_COMMIT_SHORT=$(cd "$TARGET_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_COMMIT_MSG=$(cd "$TARGET_DIR" && git log -1 --pretty=%s 2>/dev/null || echo "")
 
-# Get changed files from TARGET directory
-CHANGED_FILES=$(cd "$TARGET_DIR" && git diff --name-only HEAD~1 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+# Get changed files from TARGET directory (write to temp file to avoid ARG_MAX limits)
+CHANGED_FILES_TMP=$(mktemp)
+ASH_FINDINGS_TMP=$(mktemp)
+cleanup_tmp() { rm -f "$CHANGED_FILES_TMP" "$ASH_FINDINGS_TMP"; }
+trap cleanup_tmp EXIT
+cd "$TARGET_DIR" && git diff --name-only HEAD~1 2>/dev/null > "$CHANGED_FILES_TMP" || true
 
 # Determine overall status from ASH result
 if [[ "$ASH_RESULT" == "PASS" ]]; then
@@ -50,11 +54,12 @@ else
     STATUS="UNKNOWN"
 fi
 
-# Read detailed findings from ASH output if available
-ASH_FINDINGS="null"
+# Read detailed findings from ASH output if available (write to temp file to avoid ARG_MAX limits)
 ASH_OUTPUT_DIR="$TARGET_DIR/.ash/ash_output"
 if [ -f "$ASH_OUTPUT_DIR/ash_aggregated_results.json" ]; then
-    ASH_FINDINGS=$(cat "$ASH_OUTPUT_DIR/ash_aggregated_results.json" | jq -c '.' 2>/dev/null || echo "null")
+    jq -c '.' "$ASH_OUTPUT_DIR/ash_aggregated_results.json" > "$ASH_FINDINGS_TMP" 2>/dev/null || echo "null" > "$ASH_FINDINGS_TMP"
+else
+    echo "null" > "$ASH_FINDINGS_TMP"
 fi
 
 # Get PRD progress snapshot
@@ -86,14 +91,14 @@ JSON_ENTRY=$(jq -n \
     --arg commit "$GIT_COMMIT" \
     --arg commit_short "$GIT_COMMIT_SHORT" \
     --arg commit_msg "$GIT_COMMIT_MSG" \
-    --arg changed "$CHANGED_FILES" \
+    --rawfile changed_raw "$CHANGED_FILES_TMP" \
     --arg exit_code "$CLAUDE_EXIT_CODE" \
     --arg duration "$DURATION_SECONDS" \
     --arg story_id "$STORY_ID" \
     --arg story_title "$STORY_TITLE" \
     --arg mode "$RUN_MODE" \
     --arg transcript "$TRANSCRIPT_PATH" \
-    --argjson ash_findings "${ASH_FINDINGS:-null}" \
+    --slurpfile ash_findings "$ASH_FINDINGS_TMP" \
     --argjson prd_progress "${PRD_SNAPSHOT:-null}" \
     '{
         timestamp: $timestamp,
@@ -120,9 +125,9 @@ JSON_ENTRY=$(jq -n \
             commit_short: $commit_short,
             commit_message: $commit_msg
         },
-        changed_files: ($changed | split(",") | map(select(. != ""))),
+        changed_files: ($changed_raw | split("\n") | map(select(. != ""))),
         findings: {
-            ash: $ash_findings
+            ash: $ash_findings[0]
         },
         prd_progress: $prd_progress
     }'

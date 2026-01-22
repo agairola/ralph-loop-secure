@@ -110,22 +110,30 @@ def validate_command(command: str) -> tuple[bool, str]:
 
 def main():
     """Main entry point for the hook."""
-    # Read input from command line argument or stdin
-    if len(sys.argv) > 1:
-        try:
-            input_data = json.loads(sys.argv[1])
-            command = input_data.get('command', '')
-        except json.JSONDecodeError:
-            # Treat as raw command if not JSON
-            command = sys.argv[1]
-    else:
-        # Read from stdin
+    # Claude Code passes hook data via stdin as JSON
+    # Structure: {"tool_name": "Bash", "tool_input": {"command": "..."}, ...}
+    try:
         input_data = sys.stdin.read().strip()
-        try:
-            data = json.loads(input_data)
-            command = data.get('command', '')
-        except json.JSONDecodeError:
-            command = input_data
+        if not input_data:
+            # No input, allow
+            sys.exit(0)
+
+        data = json.loads(input_data)
+
+        # Extract command from tool_input
+        tool_input = data.get('tool_input', {})
+        if isinstance(tool_input, dict):
+            command = tool_input.get('command', '')
+        else:
+            command = str(tool_input)
+
+    except json.JSONDecodeError:
+        # If not valid JSON, treat as raw command (fallback)
+        command = input_data
+
+    if not command:
+        # No command to validate
+        sys.exit(0)
 
     is_valid, reason = validate_command(command)
 

@@ -220,7 +220,6 @@ ralph-loop-secure/
     ├── my-app/                  # Per-project state (auto-created)
     │   ├── prd.json
     │   ├── security-audit.jsonl
-    │   ├── operations.jsonl
     │   ├── .session-branch
     │   ├── .original-branch
     │   └── escalation-report-*.md
