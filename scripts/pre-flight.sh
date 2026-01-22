@@ -67,16 +67,43 @@ check_file() {
 }
 
 echo "--- Required Tools ---"
+check_command "uv" "required" "curl -LsSf https://astral.sh/uv/install.sh | sh"
 check_command "docker" "required" "brew install --cask docker"
 check_command "claude" "required" "npm install -g @anthropic-ai/claude-code"
-check_command "semgrep" "required" "pip install semgrep OR brew install semgrep"
 check_command "jq" "required" "brew install jq"
 check_command "git" "required" "brew install git"
 
 echo ""
 echo "--- Optional Tools ---"
-check_command "snyk" "optional" "npm install -g snyk && snyk auth"
 check_command "gh" "optional" "brew install gh"
+
+# Check for ASH availability via uvx
+echo ""
+echo "--- ASH Availability ---"
+if command -v uvx &> /dev/null; then
+    # Try to check if ASH can be invoked (just check help, don't actually run)
+    if uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 ash --help &>/dev/null 2>&1; then
+        echo -e "${GREEN}[OK]${NC} ASH available via uvx"
+    else
+        echo -e "${YELLOW}[INFO]${NC} ASH will be downloaded on first run via uvx"
+        echo "       This is normal - ASH is fetched automatically when needed"
+    fi
+else
+    echo -e "${RED}[FAIL]${NC} uvx not available (uv required for ASH)"
+    echo "       Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# Check for claude-code-transcripts availability via uvx
+if command -v uvx &> /dev/null; then
+    if uvx --help claude-code-transcripts &> /dev/null 2>&1 || uvx claude-code-transcripts --help &> /dev/null 2>&1; then
+        echo -e "${GREEN}[OK]${NC} claude-code-transcripts available via uvx"
+    else
+        echo -e "${YELLOW}[WARN]${NC} claude-code-transcripts not available (optional)"
+        echo "       Transcript extraction will be skipped"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
 
 echo ""
 echo "--- Docker Check ---"
@@ -102,6 +129,7 @@ echo "--- Project Files ---"
 check_file "$PROJECT_DIR/prompt.md" "required"
 check_file "$PROJECT_DIR/.claude/settings.local.json" "required"
 check_file "$PROJECT_DIR/rules/semgrep-rules.yml" "required"
+check_file "$PROJECT_DIR/.ash/ash.yaml" "optional"
 check_file "$PROJECT_DIR/config/thresholds.json" "optional"
 
 echo ""

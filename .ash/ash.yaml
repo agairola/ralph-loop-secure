@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+#
+# ASH (Automated Security Helper) Configuration
+# https://github.com/awslabs/automated-security-helper
+#
+
+project_name: ralph-loop-secure
+
+global_settings:
+  severity_threshold: MEDIUM
+  fail_on_findings: true
+  ignore_paths:
+    - path: 'tests/test_data'
+      reason: 'Test data only'
+    - path: 'node_modules/**'
+      reason: 'Third-party dependencies'
+    - path: 'venv/**'
+      reason: 'Virtual environment'
+    - path: '.venv/**'
+      reason: 'Virtual environment'
+    - path: '__pycache__/**'
+      reason: 'Python cache'
+    - path: '.git/**'
+      reason: 'Git directory'
+    - path: '.ash/**'
+      reason: 'ASH output directory'
+    - path: 'state/**'
+      reason: 'State files'
+
+scanners:
+  # SAST - Static Application Security Testing
+  semgrep:
+    enabled: true
+    options:
+      # Use our custom rules in addition to ASH defaults
+      config_paths:
+        - rules/semgrep-rules.yml
+
+  bandit:
+    enabled: true
+    options:
+      confidence_level: high
+
+  # IaC - Infrastructure as Code
+  checkov:
+    enabled: true
+
+  # Secrets Detection
+  detect-secrets:
+    enabled: true
+
+  # SCA - Software Composition Analysis (replaces Snyk)
+  grype:
+    enabled: true
+    options:
+      fail_on_severity: high
+
+reporters:
+  sarif:
+    enabled: true
+  markdown:
+    enabled: true
+    options:
+      include_detailed_findings: true
+  html:
+    enabled: true

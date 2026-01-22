@@ -43,6 +43,13 @@ Thumbs.db
 *.temp
 
 # ===========================================
+# SECURITY SCANNER OUTPUT
+# ===========================================
+
+# ASH (Automated Security Helper) output
+.ash/ash_output/
+
+# ===========================================
 # SECURITY-SENSITIVE FILES
 # ===========================================
 
