@@ -17,6 +17,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="0.1.0"
 
 # ===========================================
 # ARGUMENT PARSING
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             MAX_ITERATIONS="$2"
             shift 2
             ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options] [max_iterations] [target_dir]"
             echo ""
@@ -49,6 +54,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -p, --project NAME       Project name for state isolation"
             echo "  -t, --target DIR         Target directory to work in"
             echo "  -m, --max-iterations N   Maximum iterations (default: 10)"
+            echo "  -v, --verbose            Show raw Claude output instead of progress bar"
             echo "  -h, --help               Show this help message"
             echo ""
             echo "Positional arguments (legacy):"
@@ -88,6 +94,81 @@ done
 # Apply defaults
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 TARGET_DIR="${TARGET_DIR:-.}"
+
+# ===========================================
+# INJECTION CLEANUP
+# ===========================================
+
+# Track injected files for cleanup
+INJECTED_CLAUDE_DIR=""
+INJECTED_CLAUDE_MD=""
+INJECTED_RULES_DIR=""
+INJECTED_ASH_DIR=""
+INJECTED_GIT_EXCLUDE=""
+
+# Track progress monitor for cleanup
+PROGRESS_MONITOR_PID=""
+
+# Progress monitoring
+PROGRESS_TMPFILE=""
+VERBOSE=false
+MAGENTA='\033[0;35m'
+
+# Marker for entries we add to .git/info/exclude
+RALPH_EXCLUDE_MARKER="# ralph-loop-secure injected (auto-removed)"
+
+# Cleanup function - runs on exit, interrupt, or termination
+cleanup_injected_files() {
+    # Stop progress monitor if running
+    if [ -n "$PROGRESS_MONITOR_PID" ]; then
+        kill "$PROGRESS_MONITOR_PID" 2>/dev/null || true
+        # Clear progress line using tput
+        tput cr 2>/dev/null || printf "\r"
+        tput el 2>/dev/null || printf "%-80s\r" " "
+    fi
+
+    # Cleanup progress temp file
+    if [ -n "$PROGRESS_TMPFILE" ] && [ -f "$PROGRESS_TMPFILE" ]; then
+        rm -f "$PROGRESS_TMPFILE"
+    fi
+
+    # Cleanup .claude directory (silent)
+    if [ -n "$INJECTED_CLAUDE_DIR" ] && [ -d "$INJECTED_CLAUDE_DIR" ]; then
+        rm -rf "$INJECTED_CLAUDE_DIR"
+        local backup="${INJECTED_CLAUDE_DIR}.ralph-backup"
+        [ -d "$backup" ] && mv "$backup" "$INJECTED_CLAUDE_DIR"
+    fi
+
+    # Cleanup CLAUDE.md (silent)
+    if [ -n "$INJECTED_CLAUDE_MD" ] && [ -f "$INJECTED_CLAUDE_MD" ]; then
+        rm -f "$INJECTED_CLAUDE_MD"
+        local backup="${INJECTED_CLAUDE_MD}.ralph-backup"
+        [ -f "$backup" ] && mv "$backup" "$INJECTED_CLAUDE_MD"
+    fi
+
+    # Cleanup rules directory (silent)
+    if [ -n "$INJECTED_RULES_DIR" ] && [ -d "$INJECTED_RULES_DIR" ]; then
+        rm -rf "$INJECTED_RULES_DIR"
+        local backup="${INJECTED_RULES_DIR}.ralph-backup"
+        [ -d "$backup" ] && mv "$backup" "$INJECTED_RULES_DIR"
+    fi
+
+    # Cleanup .ash directory (silent)
+    if [ -n "$INJECTED_ASH_DIR" ] && [ -d "$INJECTED_ASH_DIR" ]; then
+        rm -rf "$INJECTED_ASH_DIR"
+        local backup="${INJECTED_ASH_DIR}.ralph-backup"
+        [ -d "$backup" ] && mv "$backup" "$INJECTED_ASH_DIR"
+    fi
+
+    # Cleanup .git/info/exclude entries (silent)
+    if [ -n "$INJECTED_GIT_EXCLUDE" ] && [ -f "$INJECTED_GIT_EXCLUDE" ]; then
+        grep -v "$RALPH_EXCLUDE_MARKER" "$INJECTED_GIT_EXCLUDE" > "$INJECTED_GIT_EXCLUDE.tmp" 2>/dev/null || true
+        mv "$INJECTED_GIT_EXCLUDE.tmp" "$INJECTED_GIT_EXCLUDE"
+    fi
+}
+
+# Register cleanup on exit, interrupt (Ctrl+C), and termination
+trap cleanup_injected_files EXIT INT TERM
 
 # ===========================================
 # PROJECT NAME DERIVATION
@@ -154,13 +235,154 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
-# Logging
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Logging - unified output format
+log_label() { printf "  %-16s │ %s\n" "$1" "$2"; }
+log_ok()    { printf "  ${GREEN}✓${NC} %-14s │ %s\n" "$1" "$2"; }
+log_info()  { printf "  %-16s │ %s\n" "$1" "$2"; }
+log_warn()  { printf "  ${YELLOW}⚠${NC} %-14s │ %s\n" "$1" "$2"; }
+log_error() { printf "  ${RED}✗${NC} %-14s │ %s\n" "$1" "$2"; }
+log_success() { printf "  ${GREEN}✓${NC} %-14s │ %s\n" "$1" "$2"; }
+
+# ===========================================
+# PROGRESS MONITORING (Real-time Step Detection)
+# ===========================================
+
+# Show session summary after Claude completes
+# Parses the session JSONL to report what happened
+show_iteration_summary() {
+    local session_file="$1"
+    local duration="$2"
+
+    if [ -z "$session_file" ] || [ ! -f "$session_file" ]; then
+        return 0
+    fi
+
+    # Count tool uses from session file (sanitize to single integer)
+    local reads=$(grep -c '"tool":"Read"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    reads=${reads:-0}
+    local edits=$(grep -c '"tool":"Edit"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    edits=${edits:-0}
+    local writes=$(grep -c '"tool":"Write"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    writes=${writes:-0}
+    local bashes=$(grep -c '"tool":"Bash"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    bashes=${bashes:-0}
+    local tasks=$(grep -c '"tool":"Task"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    tasks=${tasks:-0}
+    local skills=$(grep -c '"tool":"Skill"' "$session_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    skills=${skills:-0}
+
+    # Build summary line
+    local summary=""
+    [ "$reads" -gt 0 ] && summary="${summary}${reads} reads, "
+    [ "$edits" -gt 0 ] && summary="${summary}${edits} edits, "
+    [ "$writes" -gt 0 ] && summary="${summary}${writes} writes, "
+    [ "$bashes" -gt 0 ] && summary="${summary}${bashes} commands, "
+    [ "$tasks" -gt 0 ] && summary="${summary}${tasks} agents, "
+    [ "$skills" -gt 0 ] && summary="${summary}${skills} skills, "
+
+    # Remove trailing comma and space
+    summary="${summary%, }"
+
+    if [ -n "$summary" ]; then
+        echo ""
+        log_label "Summary" "$summary"
+    fi
+}
+
+# Real-time progress monitor (runs in background)
+# Tails Claude output and detects current step from patterns
+monitor_progress() {
+    local output_file="$1"
+    local task="$2"
+    local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spin_idx=0
+    local start_time=$(date +%s)
+    local current_step="Thinking"
+
+    task="${task:0:40}"
+
+    while true; do
+        local elapsed=$(($(date +%s) - start_time))
+        local mins=$((elapsed / 60))
+        local secs=$((elapsed % 60))
+
+        # Detect current step from output file
+        if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+            local content
+            content=$(tail -c 5000 "$output_file" 2>/dev/null || true)
+
+            # Detect tools from stream-json output format: "name":"ToolName" in tool_use blocks
+            # Order matters: more specific patterns first, then general tool detection
+
+            # Check for actual tool invocations (stream-json format uses "name":"ToolName")
+            if echo "$content" | grep -qE '"name":"Skill".*security-scan|"skill":\s*"security-scan"'; then
+                current_step="Security scan"
+            elif echo "$content" | grep -qE '"command":\s*"git commit|"input":\{[^}]*git commit'; then
+                current_step="Committing"
+            elif echo "$content" | grep -qE '"command":\s*"git add|"input":\{[^}]*git add'; then
+                current_step="Staging"
+            elif echo "$content" | grep -qE '"file_path":[^}]*progress\.txt'; then
+                current_step="Logging"
+            elif echo "$content" | grep -qE '"file_path":[^}]*prd\.json'; then
+                current_step="Updating PRD"
+            elif echo "$content" | grep -qE '"command":\s*"[^"]*\b(lint|eslint|biome|prettier)\b'; then
+                current_step="Linting"
+            elif echo "$content" | grep -qE '"command":\s*"[^"]*\b(vitest|jest|npm test|pytest|go test|cargo test)\b'; then
+                current_step="Testing"
+            elif echo "$content" | grep -qE '"file_path":[^}]*(\.test\.|\.spec\.|__tests__|_test\.go|_test\.py)'; then
+                current_step="Writing tests"
+            elif echo "$content" | grep -qE '"name":"Write"|"name":"Edit"'; then
+                current_step="Implementing"
+            elif echo "$content" | grep -qE '"name":"Read"|"name":"Glob"|"name":"Grep"|"name":"Task"'; then
+                current_step="Reading code"
+            fi
+        fi
+
+        # Color-code by phase
+        local step_color=""
+        case "$current_step" in
+            "Thinking"|"Reading code") step_color="$CYAN" ;;
+            "Implementing"|"Writing tests") step_color="$MAGENTA" ;;
+            "Testing"|"Linting"|"Security scan") step_color="$YELLOW" ;;
+            "Staging"|"Committing") step_color="$GREEN" ;;
+            *) step_color="$BLUE" ;;
+        esac
+
+        # Use tput for cleaner line clearing
+        local spinner_char="${spinstr:$spin_idx:1}"
+        tput cr 2>/dev/null || printf "\r"
+        tput el 2>/dev/null || true
+        printf "  %s ${step_color}%-16s${NC} │ %s ${DIM}[%02d:%02d]${NC}" \
+            "$spinner_char" "$current_step" "$task" "$mins" "$secs"
+
+        spin_idx=$(( (spin_idx + 1) % ${#spinstr} ))
+        sleep 0.12
+    done
+}
+
+# Start progress monitor (runs in background)
+start_progress_monitor() {
+    local output_file="$1"
+    local task="$2"
+
+    monitor_progress "$output_file" "$task" &
+    PROGRESS_MONITOR_PID=$!
+}
+
+# Stop progress monitor (if still running)
+stop_progress_monitor() {
+    if [ -n "$PROGRESS_MONITOR_PID" ]; then
+        kill "$PROGRESS_MONITOR_PID" 2>/dev/null || true
+        wait "$PROGRESS_MONITOR_PID" 2>/dev/null || true
+        PROGRESS_MONITOR_PID=""
+        # Clear any lingering progress line using tput
+        tput cr 2>/dev/null || printf "\r"
+        tput el 2>/dev/null || printf "%-80s\r" " "
+    fi
+}
 
 # ===========================================
 # TRANSCRIPT EXTRACTION
@@ -170,11 +392,8 @@ extract_transcript() {
     local iteration="$1"
     local output_dir="$PROJECT_STATE_DIR/transcripts"
 
-    # Try to extract transcript using claude-code-transcripts
+    # Try to extract transcript using claude-code-transcripts (silent)
     if command -v uvx &> /dev/null; then
-        log_info "Extracting transcript for iteration $iteration..."
-
-        # Extract latest session to HTML + JSON
         uvx claude-code-transcripts local \
             -o "$output_dir" \
             --json \
@@ -183,15 +402,12 @@ extract_transcript() {
         # Rename to iteration-based filename if extraction succeeded
         if [ -f "$output_dir/index.html" ]; then
             mv "$output_dir/index.html" "$output_dir/iteration-${iteration}.html" 2>/dev/null || true
-            log_success "Transcript saved: transcripts/iteration-${iteration}.html"
         fi
 
         # Also save JSON if available
         if [ -f "$output_dir/transcripts.json" ]; then
             mv "$output_dir/transcripts.json" "$output_dir/iteration-${iteration}.json" 2>/dev/null || true
         fi
-    else
-        log_warn "Transcript extraction skipped (uvx not available)"
     fi
 }
 
@@ -202,75 +418,56 @@ show_session_summary() {
     local original_branch=$(cat "$PROJECT_STATE_DIR/.original-branch" 2>/dev/null || echo "main")
 
     echo ""
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                    SESSION SUMMARY                          ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "  ${BLUE}Project:${NC}         $PROJECT_NAME"
-    echo -e "  ${BLUE}Session branch:${NC}  $session_branch"
-    echo -e "  ${BLUE}Original branch:${NC} $original_branch"
-    echo -e "  ${BLUE}Target directory:${NC} $TARGET_DIR"
-    echo -e "  ${BLUE}State directory:${NC} $PROJECT_STATE_DIR"
+    echo -e "═══════════════════════════════════════════════════════════════"
+    echo -e "  Session Complete"
+    echo -e "═══════════════════════════════════════════════════════════════"
     echo ""
 
     if [ "$exit_status" = "success" ]; then
-        echo -e "  ${GREEN}Status: All stories completed successfully!${NC}"
+        log_ok "Status" "All stories completed"
     elif [ "$exit_status" = "max_iterations" ]; then
-        echo -e "  ${YELLOW}Status: Max iterations reached (incomplete stories remain)${NC}"
+        log_warn "Status" "Max iterations reached"
     else
-        echo -e "  ${RED}Status: Session ended${NC}"
+        log_label "Status" "Session ended"
     fi
+
+    log_label "Branch" "$session_branch"
 
     # Show transcript locations
     if [ -d "$PROJECT_STATE_DIR/transcripts" ]; then
         TRANSCRIPT_COUNT=$(ls -1 "$PROJECT_STATE_DIR/transcripts"/*.html 2>/dev/null | wc -l | tr -d ' ')
         if [ "$TRANSCRIPT_COUNT" -gt 0 ]; then
-            echo ""
-            echo -e "  ${BLUE}Transcripts:${NC} $TRANSCRIPT_COUNT iteration(s) recorded"
-            echo -e "  ${BLUE}Location:${NC} $PROJECT_STATE_DIR/transcripts/"
+            log_label "Transcripts" "$TRANSCRIPT_COUNT iterations saved"
         fi
     fi
 
     echo ""
-    echo -e "${CYAN}─────────────────────────────────────────────────────────────${NC}"
-    echo -e "  ${BLUE}Next steps:${NC}"
+    echo "  Next steps:"
+    echo "    git log $original_branch..$session_branch"
+    echo "    gh pr create --base $original_branch"
     echo ""
-    echo "  # Review changes:"
-    echo "  cd $TARGET_DIR && git log --oneline $original_branch..$session_branch"
-    echo ""
-    echo "  # Create PR (if using GitHub):"
-    echo "  cd $TARGET_DIR && gh pr create --base $original_branch"
-    echo ""
-    echo "  # Or merge directly:"
-    echo "  cd $TARGET_DIR && git checkout $original_branch && git merge $session_branch"
-    echo ""
-    echo -e "${CYAN}─────────────────────────────────────────────────────────────${NC}"
 }
 
-# Header
+# Header - minimal unified output
 echo ""
-echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║           Ralph Loop Secure - v2.1.0                       ║${NC}"
-echo -e "${CYAN}║     Security-hardened Claude Code Orchestration            ║${NC}"
-echo -e "${CYAN}║     Security: ASH (Automated Security Helper)              ║${NC}"
-echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+echo -e "${CYAN}╭─────────────────────────────────────────────────────────────╮${NC}"
+printf "${CYAN}│${NC}  Ralph Loop Secure v%-43s ${CYAN}│${NC}\n" "$VERSION"
+echo -e "${CYAN}╰─────────────────────────────────────────────────────────────╯${NC}"
 echo ""
-
-log_info "Project: $PROJECT_NAME"
-log_info "Max iterations: $MAX_ITERATIONS"
-log_info "Target directory: $TARGET_DIR"
-log_info "State directory: $PROJECT_STATE_DIR"
+log_label "Project" "$PROJECT_NAME"
+log_label "Target" "$TARGET_DIR"
+log_label "Max iterations" "$MAX_ITERATIONS"
+echo ""
 
 # ===========================================
 # PHASE 1: PRE-FLIGHT CHECKS
 # ===========================================
 
-log_info "Running pre-flight checks..."
-if ! "$SCRIPT_DIR/scripts/pre-flight.sh"; then
-    log_error "Pre-flight checks failed. Please fix the issues above."
+if ! "$SCRIPT_DIR/scripts/pre-flight.sh" > /dev/null 2>&1; then
+    log_error "Pre-flight" "checks failed - run scripts/pre-flight.sh for details"
     exit 1
 fi
-log_success "Pre-flight checks passed"
+log_ok "Pre-flight" "passed"
 echo ""
 
 # ===========================================
@@ -287,12 +484,10 @@ echo "$ORIGINAL_BRANCH" > "$PROJECT_STATE_DIR/.original-branch"
 SESSION_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 SESSION_BRANCH="ralph/${PROJECT_NAME}-${SESSION_TIMESTAMP}"
 
-log_info "Creating isolated branch: $SESSION_BRANCH"
-git checkout -b "$SESSION_BRANCH"
+git checkout -b "$SESSION_BRANCH" > /dev/null 2>&1
 echo "$SESSION_BRANCH" > "$PROJECT_STATE_DIR/.session-branch"
 
-log_success "Working on branch: $SESSION_BRANCH"
-log_info "Original branch: $ORIGINAL_BRANCH"
+log_label "Branch" "$SESSION_BRANCH"
 
 cd - > /dev/null
 echo ""
@@ -307,9 +502,9 @@ SESSION_IDS_FILE="$PROJECT_STATE_DIR/.session-ids"
 
 for i in $(seq 1 $MAX_ITERATIONS); do
     echo ""
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}  Iteration $i of $MAX_ITERATIONS${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "═══════════════════════════════════════════════════════════════"
+    echo -e "  Iteration $i of $MAX_ITERATIONS"
+    echo -e "═══════════════════════════════════════════════════════════════"
     echo ""
 
     # Extract current story being worked on
@@ -319,7 +514,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
         CURRENT_STORY_ID=$(jq -r '.userStories[] | select(.passes == false or .passes == null) | .id' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null | head -1)
         if [ -n "$CURRENT_STORY_ID" ]; then
             CURRENT_STORY_TITLE=$(jq -r --arg id "$CURRENT_STORY_ID" '.userStories[] | select(.id == $id) | .title' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null)
-            log_info "Working on: $CURRENT_STORY_ID - $CURRENT_STORY_TITLE"
+            log_label "Story" "$CURRENT_STORY_ID: $CURRENT_STORY_TITLE"
         fi
     fi
 
@@ -332,32 +527,161 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     # ----------------------------------------
     # SPAWN CLAUDE CODE
     # ----------------------------------------
-    log_info "Spawning Claude Code..."
-    log_info "Security scanning via /security-scan skill (ASH)"
-    echo ""
 
     CLAUDE_EXIT_CODE=0
 
+    # ----------------------------------------
+    # INJECT SKILLS AND CLAUDE.MD INTO TARGET
+    # ----------------------------------------
+    # Claude discovers skills from cwd/.claude/skills/ and CLAUDE.md from cwd
+    # --add-dir only grants file access, not config discovery
+    inject_claude_config() {
+        local target="$1"
+        local source_claude="$SCRIPT_DIR/.claude"
+        local source_md="$SCRIPT_DIR/CLAUDE.md"
+        local target_claude="$target/.claude"
+        local target_md="$target/CLAUDE.md"
+        local git_exclude="$target/.git/info/exclude"
+
+        # Backup and inject .claude directory
+        if [ -d "$target_claude" ]; then
+            mv "$target_claude" "$target_claude.ralph-backup"
+        fi
+        cp -r "$source_claude" "$target_claude"
+        INJECTED_CLAUDE_DIR="$target_claude"
+
+        # Backup and inject CLAUDE.md
+        if [ -f "$target_md" ]; then
+            mv "$target_md" "$target_md.ralph-backup"
+        fi
+        cp "$source_md" "$target_md"
+        INJECTED_CLAUDE_MD="$target_md"
+
+        # Backup and inject rules directory (custom Semgrep rules)
+        local source_rules="$SCRIPT_DIR/rules"
+        local target_rules="$target/rules"
+        if [ -d "$source_rules" ]; then
+            if [ -d "$target_rules" ]; then
+                mv "$target_rules" "$target_rules.ralph-backup"
+            fi
+            cp -r "$source_rules" "$target_rules"
+            INJECTED_RULES_DIR="$target_rules"
+        fi
+
+        # Backup and inject .ash directory (ASH configuration)
+        local source_ash="$SCRIPT_DIR/.ash"
+        local target_ash="$target/.ash"
+        if [ -d "$source_ash" ]; then
+            if [ -d "$target_ash" ]; then
+                mv "$target_ash" "$target_ash.ralph-backup"
+            fi
+            cp -r "$source_ash" "$target_ash"
+            INJECTED_ASH_DIR="$target_ash"
+        fi
+
+        # Add entries to .git/info/exclude (local-only, never committed)
+        # This protects against files being staged if script crashes before cleanup
+        if [ -d "$target/.git/info" ]; then
+            mkdir -p "$target/.git/info"
+            {
+                echo ".claude/ $RALPH_EXCLUDE_MARKER"
+                echo "CLAUDE.md $RALPH_EXCLUDE_MARKER"
+                echo ".claude.ralph-backup/ $RALPH_EXCLUDE_MARKER"
+                echo "CLAUDE.md.ralph-backup $RALPH_EXCLUDE_MARKER"
+                echo "rules/ $RALPH_EXCLUDE_MARKER"
+                echo "rules.ralph-backup/ $RALPH_EXCLUDE_MARKER"
+                echo ".ash/ $RALPH_EXCLUDE_MARKER"
+                echo ".ash.ralph-backup/ $RALPH_EXCLUDE_MARKER"
+            } >> "$git_exclude"
+            INJECTED_GIT_EXCLUDE="$git_exclude"
+        fi
+    }
+
+    inject_claude_config "$TARGET_DIR"
+
     cd "$TARGET_DIR"
-    # Use -p with --verbose --output-format stream-json for progress visibility
-    # Capture session_id from first JSON line, then continue streaming tool calls
-    claude --dangerously-skip-permissions \
-        --add-dir "$SCRIPT_DIR" \
-        -p "$PROMPT_CONTENT" \
-        --verbose \
-        --output-format stream-json 2>&1 | tee >(
-            # Extract session_id from first line and save it
-            head -1 | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p' >> "$SESSION_IDS_FILE"
-        ) | stdbuf -oL sed -n \
-            -e 's/.*"type":"tool_use".*"name":"\([^"]*\)".*/  [Tool] \1/p' \
-            -e 's/.*"type":"result".*"total_cost_usd":\([0-9.]*\).*/  [Done] Cost: $\1/p'
-    CLAUDE_EXIT_CODE=${PIPESTATUS[0]}
+
+    # Derive Claude projects directory for this target
+    CLAUDE_PROJECTS_PATH="$HOME/.claude/projects/-$(echo "$RALPH_TARGET_DIR" | sed 's|^/||' | tr '/' '-')"
+
+    # Ensure projects directory exists (Claude may not have created it yet)
+    mkdir -p "$CLAUDE_PROJECTS_PATH" 2>/dev/null || true
+
+    # Get list of session files BEFORE running Claude
+    SESSIONS_BEFORE=$(ls -1 "$CLAUDE_PROJECTS_PATH"/*.jsonl 2>/dev/null | sort)
+
+    # Task display for progress
+    TASK_DISPLAY="${CURRENT_STORY_ID:-US-XXX}: ${CURRENT_STORY_TITLE:-Working...}"
+    TASK_DISPLAY="${TASK_DISPLAY:0:50}"
+
+    # Create temp file for output
+    PROGRESS_TMPFILE=$(mktemp)
+
+    if [ "$VERBOSE" = true ]; then
+        # Verbose mode: show raw output (original behavior)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            script -q /dev/null claude --dangerously-skip-permissions \
+                --add-dir "$SCRIPT_DIR" \
+                -p "$PROMPT_CONTENT" || true
+        else
+            script -q -c "claude --dangerously-skip-permissions \
+                --add-dir \"$SCRIPT_DIR\" \
+                -p \"$PROMPT_CONTENT\"" /dev/null || true
+        fi
+        CLAUDE_EXIT_CODE=$?
+    else
+        # Progress monitor mode: capture output, show progress bar
+        start_progress_monitor "$PROGRESS_TMPFILE" "$TASK_DISPLAY"
+
+        # Run Claude with stream-json for progress detection
+        claude --dangerously-skip-permissions \
+            --verbose \
+            --output-format stream-json \
+            --add-dir "$SCRIPT_DIR" \
+            -p "$PROMPT_CONTENT" > "$PROGRESS_TMPFILE" 2>&1 || true
+        CLAUDE_EXIT_CODE=$?
+
+        # Stop monitor and show final status
+        stop_progress_monitor
+
+        # Calculate elapsed time for final status
+        elapsed=$(($(date +%s) - START_TIME))
+        mins=$((elapsed / 60))
+        secs=$((elapsed % 60))
+        printf "  ${GREEN}✓${NC} %-16s │ %s ${DIM}[%02d:%02d]${NC}\n" "Done" "$TASK_DISPLAY" "$mins" "$secs"
+
+        # Show last few lines of output for context
+        if [ -s "$PROGRESS_TMPFILE" ]; then
+            echo ""
+            echo -e "  ${CYAN}[Output]${NC}"
+            tail -20 "$PROGRESS_TMPFILE" | sed 's/^/  /'
+        fi
+    fi
+
+    # Cleanup temp file
+    rm -f "$PROGRESS_TMPFILE"
+    PROGRESS_TMPFILE=""
+
+    # Find new session file by comparing before/after
+    SESSIONS_AFTER=$(ls -1 "$CLAUDE_PROJECTS_PATH"/*.jsonl 2>/dev/null | sort)
+    NEW_SESSION_FILE=$(comm -13 <(echo "$SESSIONS_BEFORE") <(echo "$SESSIONS_AFTER") | tail -1)
+
+    # Extract session ID from filename and save it
+    if [ -n "$NEW_SESSION_FILE" ]; then
+        SESSION_ID=$(basename "$NEW_SESSION_FILE" .jsonl)
+        echo "$SESSION_ID" >> "$SESSION_IDS_FILE"
+    fi
+
     cd - > /dev/null
 
     # Track duration
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
-    log_info "Claude Code session completed in ${DURATION}s (exit code: $CLAUDE_EXIT_CODE)"
+
+    # Show iteration summary with tool usage stats
+    if [ -n "$NEW_SESSION_FILE" ]; then
+        show_iteration_summary "$NEW_SESSION_FILE" "$DURATION"
+    fi
 
     # ----------------------------------------
     # LOG RESULTS
@@ -399,7 +723,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
             ALL_STORIES_COMPLETE=true
             break
         fi
-        log_info "$INCOMPLETE stories remaining"
+        log_label "Remaining" "$INCOMPLETE stories"
     fi
 
 done
@@ -409,7 +733,6 @@ done
 # ----------------------------------------
 if [ -f "$SESSION_IDS_FILE" ] && [ -s "$SESSION_IDS_FILE" ]; then
     ITERATION_COUNT=$(wc -l < "$SESSION_IDS_FILE" | tr -d ' ')
-    log_info "Extracting transcripts for $ITERATION_COUNT iteration(s)..."
 
     # Derive Claude projects directory from target path
     # Claude stores sessions in ~/.claude/projects/-{path-with-dashes}/
@@ -429,39 +752,18 @@ if [ -f "$SESSION_IDS_FILE" ] && [ -s "$SESSION_IDS_FILE" ]; then
                 if [ -f "$PROJECT_STATE_DIR/transcripts/index.html" ]; then
                     mv "$PROJECT_STATE_DIR/transcripts/index.html" "$PROJECT_STATE_DIR/transcripts/iteration-${TRANSCRIPT_INDEX}.html" 2>/dev/null || true
                 fi
-                # Keep the JSONL with session ID name (already copied by --json flag)
-            else
-                log_warn "Session file not found: $SESSION_FILE"
             fi
-
             TRANSCRIPT_INDEX=$((TRANSCRIPT_INDEX + 1))
         fi
     done < "$SESSION_IDS_FILE"
-
-    log_success "Transcripts saved to: $PROJECT_STATE_DIR/transcripts/"
 fi
 
 # ----------------------------------------
 # SESSION COMPLETION
 # ----------------------------------------
 if [ "${ALL_STORIES_COMPLETE:-false}" = "true" ]; then
-    echo ""
-    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                    ALL STORIES COMPLETE!                    ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
     show_session_summary "success"
     exit 0
-fi
-
-echo ""
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-log_warn "Max iterations ($MAX_ITERATIONS) reached"
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-
-# Final status
-if [ -f "$PROJECT_STATE_DIR/prd.json" ]; then
-    INCOMPLETE=$(jq '[.userStories[] | select(.passes == false or .passes == null)] | length' "$PROJECT_STATE_DIR/prd.json" 2>/dev/null || echo "?")
-    log_info "$INCOMPLETE stories still incomplete"
 fi
 
 show_session_summary "max_iterations"
