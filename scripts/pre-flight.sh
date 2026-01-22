@@ -68,7 +68,6 @@ check_file() {
 
 echo "--- Required Tools ---"
 check_command "uv" "required" "curl -LsSf https://astral.sh/uv/install.sh | sh"
-check_command "docker" "required" "brew install --cask docker"
 check_command "claude" "required" "npm install -g @anthropic-ai/claude-code"
 check_command "jq" "required" "brew install jq"
 check_command "git" "required" "brew install git"
@@ -103,25 +102,6 @@ if command -v uvx &> /dev/null; then
         echo "       Transcript extraction will be skipped"
         WARNINGS=$((WARNINGS + 1))
     fi
-fi
-
-echo ""
-echo "--- Docker Check ---"
-if docker info &> /dev/null; then
-    echo -e "${GREEN}[OK]${NC} Docker daemon is running"
-
-    # Check if docker sandbox is available
-    if docker help 2>&1 | grep -q "sandbox"; then
-        echo -e "${GREEN}[OK]${NC} Docker sandbox feature available"
-    else
-        echo -e "${YELLOW}[WARN]${NC} Docker sandbox feature not detected"
-        echo "       Requires Docker Desktop 4.50+ with sandbox support"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-else
-    echo -e "${RED}[FAIL]${NC} Docker daemon is not running"
-    echo "       Start Docker Desktop"
-    ERRORS=$((ERRORS + 1))
 fi
 
 echo ""

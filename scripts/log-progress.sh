@@ -16,11 +16,10 @@ TARGET_DIR="${RALPH_TARGET_DIR:-$(pwd)}"
 
 # Arguments
 ITERATION="${1:-0}"
-SEMGREP_RESULT="${2:-UNKNOWN}"
-SNYK_RESULT="${3:-UNKNOWN}"
-DURATION_SECONDS="${4:-0}"
-STORY_ID="${5:-}"
-STORY_TITLE="${6:-}"
+ASH_RESULT="${2:-UNKNOWN}"
+DURATION_SECONDS="${3:-0}"
+STORY_ID="${4:-}"
+STORY_TITLE="${5:-}"
 
 # Ensure state directory exists
 mkdir -p "$STATE_DIR"
@@ -42,10 +41,12 @@ fi
 TIMESTAMP=$(date +"%Y-%m-%d %H:%M")
 
 # Determine overall status
-if [[ "$SEMGREP_RESULT" == "PASS" ]] && [[ "$SNYK_RESULT" == "PASS" || "$SNYK_RESULT" == SKIP:* ]]; then
-    STATUS="PASS"
-else
+if [[ "$ASH_RESULT" == "PASS" ]] || [[ "$ASH_RESULT" == "INTERNAL" ]]; then
+    STATUS="$ASH_RESULT"
+elif [[ "$ASH_RESULT" == FAIL:* ]] || [[ "$ASH_RESULT" == "FAIL" ]]; then
     STATUS="FAIL"
+else
+    STATUS="$ASH_RESULT"
 fi
 
 # Get git info from target directory
@@ -66,7 +67,7 @@ CHANGED_FILES=$(cd "$TARGET_DIR" && git diff --name-only HEAD~1 2>/dev/null || e
 
     echo "**Status:** $STATUS"
     echo "**Duration:** ${DURATION_SECONDS}s"
-    echo "**Security:** Semgrep $SEMGREP_RESULT, Snyk $SNYK_RESULT"
+    echo "**Security:** ASH $ASH_RESULT (internal scan)"
     echo ""
 
     if [ -n "$CHANGED_FILES" ]; then
