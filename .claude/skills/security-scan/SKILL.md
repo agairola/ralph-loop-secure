@@ -47,16 +47,23 @@ Run this skill after implementing a story and staging changes, but BEFORE commit
 
 ## Scan Execution
 
-### Step 1: Run ASH
+### Step 1: Run ASH + Custom Semgrep Rules
 
 ```bash
 # Create output directory
 mkdir -p .ash/ash_output
 
-# Run ASH in local mode (Python tools via UV)
+# Run ASH in local mode (provides built-in scanners)
 uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 \
   ash --mode local --source-dir . --output-dir .ash/ash_output
+
+# Run custom semgrep rules separately (ASH doesn't pass custom config to semgrep)
+if [ -f ".ash/rules/semgrep-rules.yml" ]; then
+  uvx semgrep --config .ash/rules/semgrep-rules.yml --json --quiet . > .ash/ash_output/custom-semgrep.json 2>/dev/null || true
+fi
 ```
+
+**Note:** ASH runs semgrep with its built-in rules. Custom rules in `.ash/rules/semgrep-rules.yml` are run separately and merged with ASH results.
 
 ### Step 2: Load Baseline
 
@@ -76,11 +83,17 @@ The baseline file contains findings captured before you started working:
 
 ### Step 3: Classify Findings
 
-Compare current scan results against the baseline:
+Compare current scan results (ASH + custom semgrep) against the baseline:
 
 ```bash
-# Read current findings
-CURRENT=$(cat .ash/ash_output/ash_aggregated_results.json | jq -c '[.findings[]?]')
+# Read ASH findings from OCSF format
+ASH_FINDINGS=$(cat .ash/ash_output/reports/ash.ocsf.json | jq -c '[.[]? | .vulnerabilities[0] as $v | {file: $v.affected_code[0].file.path, line: $v.affected_code[0].start_line, rule_id: $v.cve.uid, severity: $v.severity, message: $v.desc}]')
+
+# Read custom semgrep findings
+CUSTOM_FINDINGS=$(cat .ash/ash_output/custom-semgrep.json 2>/dev/null | jq -c '[.results[]? | {file: .path, line: .start.line, rule_id: .check_id, severity: .extra.severity, message: .extra.message}]' || echo "[]")
+
+# Merge all findings
+CURRENT=$(echo "$ASH_FINDINGS" "$CUSTOM_FINDINGS" | jq -s 'add | unique_by(.file + ":" + (.line|tostring) + ":" + .rule_id)')
 
 # Read baseline
 BASELINE=$(cat "$RALPH_PROJECT_STATE_DIR/security-baseline.json" 2>/dev/null || echo "[]")
@@ -236,17 +249,13 @@ global_settings:
 
 ## Custom Rules
 
-Your existing Semgrep rules are preserved. ASH runs Semgrep with both its default rulesets AND your custom rules:
+Custom Semgrep rules in `.ash/rules/semgrep-rules.yml` are run **separately** from ASH (ASH v3.1.5 doesn't honor the custom config option). The scan process automatically:
 
-```yaml
-# In .ash/ash.yaml
-scanners:
-  semgrep:
-    enabled: true
-    options:
-      config_paths:
-        - rules/semgrep-rules.yml
-```
+1. Runs ASH (built-in semgrep + other scanners)
+2. Runs semgrep with `.ash/rules/semgrep-rules.yml`
+3. Merges and deduplicates findings
+
+This gives you both ASH's comprehensive scanning AND your project-specific custom rules.
 
 ## Troubleshooting
 

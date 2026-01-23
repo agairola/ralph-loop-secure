@@ -476,3 +476,124 @@ rules:
     metadata:
       category: quality
       subcategory: error-handling
+
+  # ===========================================
+  # SSRF (Server-Side Request Forgery)
+  # ===========================================
+
+  - id: js-ssrf-fetch
+    patterns:
+      - pattern: fetch($URL)
+      - pattern-not: fetch("...")
+    message: "Potential SSRF. Validate and allowlist URLs before fetching user-controlled input."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: ssrf
+      cwe: "CWE-918: Server-Side Request Forgery"
+
+  - id: js-ssrf-axios
+    patterns:
+      - pattern: axios.get($URL)
+      - pattern-not: axios.get("...")
+    message: "Potential SSRF. Validate and allowlist URLs before making requests."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: ssrf
+      cwe: "CWE-918: Server-Side Request Forgery"
+
+  # ===========================================
+  # PROTOTYPE POLLUTION
+  # ===========================================
+
+  - id: js-prototype-pollution-merge
+    pattern: |
+      for (const $KEY in $SOURCE) {
+        ...
+        $TARGET[$KEY] = ...
+        ...
+      }
+    message: "Potential prototype pollution. Check for __proto__ and constructor.prototype before assignment."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: prototype-pollution
+      cwe: "CWE-1321: Improperly Controlled Modification of Object Prototype"
+
+  - id: js-prototype-pollution-bracket
+    pattern: $OBJ[$KEY] = $VALUE
+    message: "Dynamic property assignment may lead to prototype pollution if key is user-controlled."
+    severity: INFO
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: prototype-pollution
+      cwe: "CWE-1321: Improperly Controlled Modification of Object Prototype"
+
+  # ===========================================
+  # INSECURE RANDOMNESS
+  # ===========================================
+
+  - id: js-insecure-random
+    pattern: Math.random()
+    message: "Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.getRandomValues() for security-sensitive operations."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: cryptography
+      cwe: "CWE-330: Use of Insufficiently Random Values"
+
+  # ===========================================
+  # NOSQL INJECTION
+  # ===========================================
+
+  - id: js-nosql-injection-find
+    pattern: $COLLECTION.find($QUERY)
+    message: "Potential NoSQL injection. Validate and sanitize query objects, especially $where clauses."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-943: Improper Neutralization of NoSQL Injection"
+
+  - id: js-nosql-injection-findone
+    pattern: $COLLECTION.findOne($QUERY)
+    message: "Potential NoSQL injection. Validate and sanitize query objects."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-943: Improper Neutralization of NoSQL Injection"
+
+  - id: js-nosql-injection-aggregate
+    pattern: $COLLECTION.aggregate($PIPELINE)
+    message: "Potential NoSQL injection in aggregation pipeline. Validate user input."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    metadata:
+      category: security
+      subcategory: injection
+      cwe: "CWE-943: Improper Neutralization of NoSQL Injection"

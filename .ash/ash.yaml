@@ -76,9 +76,8 @@ scanners:
   semgrep:
     enabled: true
     options:
-      # Custom rules in addition to ASH defaults
-      config_paths:
-        - rules/semgrep-rules.yml
+      # Custom rules in addition to ASH defaults (relative to source-dir with ./ prefix)
+      config: ./.ash/rules/semgrep-rules.yml
       # Additional rulesets from Semgrep registry
       rulesets:
         - p/security-audit

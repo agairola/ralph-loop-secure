@@ -231,7 +231,7 @@ ralph-loop-secure/
 
 ### Adding Semgrep Rules
 
-Edit `rules/semgrep-rules.yml` to add custom rules:
+Edit `.ash/rules/semgrep-rules.yml` to add custom rules:
 
 ```yaml
 rules:

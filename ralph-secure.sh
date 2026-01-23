@@ -103,7 +103,6 @@ TARGET_DIR="${TARGET_DIR:-.}"
 # Track injected files for cleanup
 INJECTED_CLAUDE_DIR=""
 INJECTED_CLAUDE_MD=""
-INJECTED_RULES_DIR=""
 INJECTED_ASH_DIR=""
 INJECTED_GIT_EXCLUDE=""
 INJECTED_HOOK=""
@@ -146,13 +145,6 @@ cleanup_injected_files() {
         rm -f "$INJECTED_CLAUDE_MD"
         local backup="${INJECTED_CLAUDE_MD}.ralph-backup"
         [ -f "$backup" ] && mv "$backup" "$INJECTED_CLAUDE_MD"
-    fi
-
-    # Cleanup rules directory (silent)
-    if [ -n "$INJECTED_RULES_DIR" ] && [ -d "$INJECTED_RULES_DIR" ]; then
-        rm -rf "$INJECTED_RULES_DIR"
-        local backup="${INJECTED_RULES_DIR}.ralph-backup"
-        [ -d "$backup" ] && mv "$backup" "$INJECTED_RULES_DIR"
     fi
 
     # Cleanup .ash directory (silent)
@@ -272,18 +264,38 @@ create_security_baseline() {
     # Create baseline output directory
     mkdir -p "$baseline_output_dir"
 
+    # Temporarily inject .ash/ config for baseline scan (needed for custom rules)
+    local temp_ash_injected=false
+    if [ -d "$SCRIPT_DIR/.ash" ] && [ ! -d "$target_dir/.ash" ]; then
+        cp -r "$SCRIPT_DIR/.ash" "$target_dir/.ash"
+        temp_ash_injected=true
+    fi
+
     # Run ASH scan on current HEAD (silently)
     cd "$target_dir"
     uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 \
         ash --mode local --source-dir . --output-dir "$baseline_output_dir" \
         > /dev/null 2>&1 || true
+
+    # Run custom semgrep rules separately (ASH doesn't honor custom semgrep config)
+    local custom_semgrep_output="$baseline_output_dir/custom-semgrep.json"
+    if [ -f ".ash/rules/semgrep-rules.yml" ]; then
+        uvx semgrep --config .ash/rules/semgrep-rules.yml \
+            --json --quiet \
+            . > "$custom_semgrep_output" 2>/dev/null || true
+    fi
     cd - > /dev/null
 
-    # Extract finding signatures (file:line:rule_id) for comparison
-    # Use OCSF format which is a flat array with cleaner structure
+    # Clean up temporarily injected .ash/ directory
+    if [ "$temp_ash_injected" = true ]; then
+        rm -rf "$target_dir/.ash"
+    fi
+
+    # Extract ASH findings (OCSF format)
     local ocsf_results="$baseline_output_dir/reports/ash.ocsf.json"
+    local ash_findings="[]"
     if [ -f "$ocsf_results" ]; then
-        jq -c '[
+        ash_findings=$(jq -c '[
             .[]? |
             .vulnerabilities[0] as $v |
             {
@@ -293,10 +305,26 @@ create_security_baseline() {
                 severity: $v.severity,
                 message: $v.desc
             }
-        ]' "$ocsf_results" > "$baseline_file" 2>/dev/null || echo "[]" > "$baseline_file"
-    else
-        echo "[]" > "$baseline_file"
+        ]' "$ocsf_results" 2>/dev/null || echo "[]")
     fi
+
+    # Extract custom semgrep findings and merge
+    local custom_findings="[]"
+    if [ -f "$custom_semgrep_output" ]; then
+        custom_findings=$(jq -c '[
+            .results[]? |
+            {
+                file: .path,
+                line: .start.line,
+                rule_id: .check_id,
+                severity: (if .extra.severity == "ERROR" then "ERROR" elif .extra.severity == "WARNING" then "WARNING" else "INFO" end),
+                message: .extra.message
+            }
+        ]' "$custom_semgrep_output" 2>/dev/null || echo "[]")
+    fi
+
+    # Merge and deduplicate findings
+    echo "$ash_findings" "$custom_findings" | jq -s 'add | unique_by(.file + ":" + (.line|tostring) + ":" + .rule_id)' > "$baseline_file" 2>/dev/null || echo "[]" > "$baseline_file"
 
     # Store baseline creation timestamp
     date -u +"%Y-%m-%dT%H:%M:%SZ" > "$PROJECT_STATE_DIR/.baseline-timestamp"
@@ -703,18 +731,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
         cp "$source_md" "$target_md"
         INJECTED_CLAUDE_MD="$target_md"
 
-        # Backup and inject rules directory (custom Semgrep rules)
-        local source_rules="$SCRIPT_DIR/rules"
-        local target_rules="$target/rules"
-        if [ -d "$source_rules" ]; then
-            if [ -d "$target_rules" ]; then
-                mv "$target_rules" "$target_rules.ralph-backup"
-            fi
-            cp -r "$source_rules" "$target_rules"
-            INJECTED_RULES_DIR="$target_rules"
-        fi
-
-        # Backup and inject .ash directory (ASH configuration)
+        # Backup and inject .ash directory (ASH configuration + custom Semgrep rules)
         local source_ash="$SCRIPT_DIR/.ash"
         local target_ash="$target/.ash"
         if [ -d "$source_ash" ]; then
@@ -734,8 +751,6 @@ for i in $(seq 1 $MAX_ITERATIONS); do
                 echo "CLAUDE.md $RALPH_EXCLUDE_MARKER"
                 echo ".claude.ralph-backup/ $RALPH_EXCLUDE_MARKER"
                 echo "CLAUDE.md.ralph-backup $RALPH_EXCLUDE_MARKER"
-                echo "rules/ $RALPH_EXCLUDE_MARKER"
-                echo "rules.ralph-backup/ $RALPH_EXCLUDE_MARKER"
                 echo ".ash/ $RALPH_EXCLUDE_MARKER"
                 echo ".ash.ralph-backup/ $RALPH_EXCLUDE_MARKER"
             } >> "$git_exclude"
@@ -755,7 +770,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 #!/bin/bash
 # Ralph Loop: Auto-unstage injected files before commit
 # This prevents accidentally committing ralph-loop configuration files
-git reset HEAD -- .claude/ CLAUDE.md .ash/ rules/ 2>/dev/null || true
+git reset HEAD -- .claude/ CLAUDE.md .ash/ 2>/dev/null || true
 
 # Run original pre-commit hook if it existed
 if [ -f "$0.ralph-backup" ]; then

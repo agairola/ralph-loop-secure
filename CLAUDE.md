@@ -154,7 +154,7 @@ All paths below with `{project}` are per-project (e.g., `state/my-app/prd.json`)
 | `.ash/ash.yaml` | ASH security scanner configuration |
 | `.ash/ash_output/` | ASH scan results (don't commit) |
 | `config/thresholds.json` | Scan thresholds |
-| `rules/semgrep-rules.yml` | Custom Semgrep rules (used by ASH) |
+| `.ash/rules/semgrep-rules.yml` | Custom Semgrep rules (used by ASH) |
 
 ## Environment Variables
 
