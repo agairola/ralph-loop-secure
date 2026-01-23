@@ -4,7 +4,50 @@ Adding security practices to the Ralph Loop - scan, fix, repeat.
 
 Ralph is an autonomous AI agent loop that runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context. Memory persists via git history, `progress.txt`, and `prd.json`. Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/).
 
-When I saw the Ralph pattern going viral, my security paranoia got the best of me. After wasting way too many tokens, I came up with a simple approach: put security checks in the path for each generation, independent of any external tooling, using open-source scanners. Is it bulletproof? Probably not. But it's a thought exercise in how we can take traditional DevSecOps practices and let AI follow them while still being functional.
+When I saw the Ralph pattern going viral, my security paranoia got the best of me. After wasting way too many tokens, I came up with a simple approach: put security checks in the path for each generation, independent of any external tooling, using open-source scanners. Is it bulletproof? Definitely not. But it's a thought exercise in how we can take traditional DevSecOps practices and let AI follow them while still being functional.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SECURING RALPH LOOP                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────┐    ┌─────────────┐    ┌──────────────────┐       │
+│   │  PRD    │───▶│ Claude Code │───▶│ Implement Story  │       │
+│   │ Stories │    │  Session    │    │                  │       │
+│   └─────────┘    └─────────────┘    └────────┬─────────┘       │
+│                                              │                  │
+│                                              ▼                  │
+│                                     ┌────────────────┐          │
+│                                     │ /security-scan │          │
+│                                     │ (ASH/Semgrep/  │          │
+│                                     │  Grype/etc)    │          │
+│                                     └───────┬────────┘          │
+│                                             │                   │
+│                         ┌───────────────────┴───────────────┐   │
+│                         │                                   │   │
+│                         ▼                                   ▼   │
+│                   ┌──────────┐                      ┌──────────┐│
+│                   │   PASS   │                      │   FAIL   ││
+│                   │  Commit  │                      │  Fix it  ││
+│                   └────┬─────┘                      └────┬─────┘│
+│                        │                                 │      │
+│                        │                    ┌────────────┘      │
+│                        │                    │ (max 3 retries)   │
+│                        │                    ▼                   │
+│                        │           ┌─────────────────┐          │
+│                        │           │ Still failing?  │          │
+│                        │           │ Escalate to     │          │
+│                        │           │ human (GitHub   │          │
+│                        │           │ issue + Slack)  │          │
+│                        │           └─────────────────┘          │
+│                        ▼                                        │
+│               ┌─────────────────┐                               │
+│               │ Next iteration  │◀──────────────────────────────│
+│               │ or complete     │                               │
+│               └─────────────────┘                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## The Philosophy
 
