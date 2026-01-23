@@ -50,10 +50,10 @@ The automated security remediation loop has been exhausted without resolving all
 
 ## What Happened
 
-1. Claude Code implemented changes for a user story
-2. External security scanners (Semgrep/Snyk) detected vulnerabilities
-3. Remediation was attempted 3 times
-4. Security issues persist after all attempts
+1. Claude Code implemented changes for user stories
+2. Internal security scans (/security-scan skill with ASH) checked for vulnerabilities
+3. Max iterations reached with stories still incomplete
+4. Human review required to continue
 
 ---
 

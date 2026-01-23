@@ -161,7 +161,8 @@ if [ "$NEW_COUNT" != "0" ] && [ "$STATUS" = "FAIL" ]; then
 fi
 
 # Build JSON entry with session metadata and finding classification
-JSON_ENTRY=$(jq -n \
+# Use -c for compact output (proper JSON Lines format - one object per line)
+JSON_ENTRY=$(jq -cn \
     --arg timestamp "$TIMESTAMP" \
     --arg project "$PROJECT_NAME" \
     --arg iteration "$ITERATION" \
