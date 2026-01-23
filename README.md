@@ -1,5 +1,7 @@
 # Securing Ralph Loop
 
+<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right">
+
 Adding security practices to the Ralph Loop - scan, fix, repeat.
 
 Ralph is an autonomous AI agent loop that runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context. Memory persists via git history, `progress.txt`, and `prd.json`. Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/).
@@ -13,8 +15,6 @@ PRD → Claude Code → Implement → Security Scan → PASS? → Commit → Nex
 ```
 
 ## The Philosophy
-
-<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right">
 
 **"AFK (Away From Keyboard) movement"** - run this, walk away, come back to secure code.
 
