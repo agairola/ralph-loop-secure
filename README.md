@@ -2,6 +2,12 @@
 
 Adding security practices to the Ralph Loop - scan, fix, repeat.
 
+Ralph is an autonomous AI agent loop that runs AI coding tools ([Amp](https://ampcode.com) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code)) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context. Memory persists via git history, `progress.txt`, and `prd.json`.
+
+Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/).
+
+[Read my in-depth article on how I use Ralph](https://x.com/ryancarson/status/2008548371712135632)
+
 ## The Philosophy
 
 <img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right">
