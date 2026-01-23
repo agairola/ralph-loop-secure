@@ -16,7 +16,7 @@ PRD → Claude Code → Implement → Security Scan → PASS? → Commit → Nex
 
 **"AFK (Away From Keyboard) movement"** - run this, walk away, come back to secure code.
 
-The name "Ralph Wiggum Loop" is intentionally ironic. Ralph Wiggum (from The Simpsons) is famously oblivious to danger. This system is the opposite: it's **hyper-aware** of security issues, so you don't have to be.
+The name "Ralph Wiggum Loop" is a nod to The Simpsons character who's famously oblivious to danger. This system is the opposite: it catches security issues automatically, so you don't have to.
 
 Traditional AI-assisted development:
 - AI writes code → human hopes it's secure → CI finds issues → human fixes
@@ -36,21 +36,21 @@ This project is built on 10 security principles:
 | 2 | **Baseline Delta** | Pre-existing vulns tracked separately; only NEW findings block commits |
 | 3 | **Internal Loop** | Security scans run inside Claude's session, not in external CI |
 | 4 | **Iterative Fixes** | Up to 3 remediation attempts before giving up |
-| 5 | **Graceful Escalation** | GitHub issues + Slack notification when AI can't fix |
+| 5 | **Escalation** | GitHub issues + Slack notification when AI can't fix |
 | 6 | **Sandbox Constraints** | No network, no sudo, no dangerous deletions |
 | 7 | **Pre-commit Guard** | Hook prevents accidental commit of injected config files |
-| 8 | **Full Audit Trail** | Every iteration logged, every conversation transcribed |
-| 9 | **Open Source Stack** | ASH, Semgrep, Grype, Checkov - battle-tested tools |
+| 8 | **Audit Trail** | Every iteration logged, every conversation transcribed |
+| 9 | **Open Source Stack** | ASH, Semgrep, Grype, Checkov - established open-source tools |
 | 10 | **Human Override** | You can always step back in; nothing is fully autonomous |
 
 ## How Security Is Enforced
 
 Security scanning is **mandatory** through Claude Code's [skills system](https://docs.anthropic.com/en/docs/claude-code/skills):
 
-### The Enforcement Stack
+### How scanning is enforced
 
 1. **Workflow Instructions** (CLAUDE.md)
-   - Explicitly requires `/security-scan` before every commit
+   - Requires `/security-scan` before every commit
    - Documents the scan-fix-retry loop
 
 2. **Claude Code Skills** (`.claude/skills/`)
@@ -84,7 +84,7 @@ Code changes → /self-check → /security-scan → Compare baseline
 
 ### The Ralph Loop
 
-This project builds on the **Ralph Loop** methodology created by [Geoffrey Huntley](https://x.com/GeoffreyHuntley). His original work on autonomous AI development loops ([ghuntley.com/ralph](https://ghuntley.com/ralph/), [ghuntley.com/loop](https://ghuntley.com/loop/)) pioneered the concept of "AFK movement" - letting AI agents work autonomously while humans step away. This project explores adding security practices into that loop: scan before commit, fix iteratively, escalate when stuck.
+Built on the **Ralph Loop** methodology created by [Geoffrey Huntley](https://x.com/GeoffreyHuntley). His original work on autonomous AI development loops ([ghuntley.com/ralph](https://ghuntley.com/ralph/), [ghuntley.com/loop](https://ghuntley.com/loop/)) introduced the concept of "AFK movement" - letting AI agents work autonomously while humans step away. This adds security practices to that loop: scan before commit, fix iteratively, escalate when stuck.
 
 ### Open Source Tools
 
