@@ -1,299 +1,187 @@
 # Securing Ralph Loop
 
-Security-hardened orchestration shell script that spawns Claude Code instances with built-in security validation.
+Adding security practices to the Ralph Loop - scan, fix, repeat.
 
-## Overview
+## The Philosophy
 
-Securing Ralph Loop is an **external orchestrator** that runs Claude Code with automated security scanning. Security validation happens **inside** Claude Code sessions via the `/security-scan` skill, using ASH (Automated Security Helper) which bundles Semgrep, Grype, and other scanners.
+<p align="center">
+  <img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="200">
+</p>
+
+**"AFK (Away From Keyboard) movement"** - run this, walk away, come back to secure code.
+
+The name "Ralph Wiggum Loop" is intentionally ironic. Ralph Wiggum (from The Simpsons) is famously oblivious to danger. This system is the opposite: it's **hyper-aware** of security issues, so you don't have to be.
+
+Traditional AI-assisted development:
+- AI writes code → human hopes it's secure → CI finds issues → human fixes
+
+Securing Ralph Loop:
+- AI writes code → scans immediately → AI fixes issues → repeats until secure → escalates if stuck
+
+The security loop runs **inside** Claude's session, giving it full context to fix problems iteratively. You can step away knowing that vulnerable code won't reach your branch.
+
+## Security Tenets
+
+This project is built on 10 security principles:
+
+| # | Tenet | Description |
+|---|-------|-------------|
+| 1 | **Branch Isolation** | Each session creates its own branch (`ralph/{project}-{timestamp}`) - main stays clean |
+| 2 | **Baseline Delta** | Pre-existing vulns tracked separately; only NEW findings block commits |
+| 3 | **Internal Loop** | Security scans run inside Claude's session, not in external CI |
+| 4 | **Iterative Fixes** | Up to 3 remediation attempts before giving up |
+| 5 | **Graceful Escalation** | GitHub issues + Slack notification when AI can't fix |
+| 6 | **Sandbox Constraints** | No network, no sudo, no dangerous deletions |
+| 7 | **Pre-commit Guard** | Hook prevents accidental commit of injected config files |
+| 8 | **Full Audit Trail** | Every iteration logged, every conversation transcribed |
+| 9 | **Open Source Stack** | ASH, Semgrep, Grype, Checkov - battle-tested tools |
+| 10 | **Human Override** | You can always step back in; nothing is fully autonomous |
+
+## How Security Is Enforced
+
+Security scanning is **mandatory** through Claude Code's [skills system](https://docs.anthropic.com/en/docs/claude-code/skills):
+
+### The Enforcement Stack
+
+1. **Workflow Instructions** (CLAUDE.md)
+   - Explicitly requires `/security-scan` before every commit
+   - Documents the scan-fix-retry loop
+
+2. **Claude Code Skills** (`.claude/skills/`)
+   - `/security-scan` - Runs ASH with 5 scanners, enforces PASS/FAIL
+   - `/fix-security` - Applies secure coding patterns
+   - `/self-check` - Pre-commit validation
+   - `/code-review` - Security-focused review checklist
+
+3. **Pre-Execution Hooks** (`.claude/hooks/`)
+   - Validates every Bash command before execution
+   - Blocks: network commands, privilege escalation, dangerous deletions
+
+4. **Permission Controls** (`.claude/settings.local.json`)
+   - Whitelist of allowed tools
+   - Explicit deny list for dangerous operations
+   - No `curl`, `wget`, `sudo`, `ssh`
+
+### The Mandatory Loop
 
 ```
-HOST MACHINE (ralph-secure.sh orchestrator)
-│
-├─► Pre-flight checks
-│
-├─► Spawn Claude Code (implements story)
-│
-├─► Internal security scan via /security-scan skill
-│
-├─► Decision gate
-│   ├─► PASS → next iteration
-│   ├─► FAIL → remediation loop (max 3x)
-│   └─► EXHAUSTED → human escalation
-│
-└─► Completion check
+Code changes → /self-check → /security-scan → Compare baseline
+                                    ↓
+                        NEW findings? → FAIL (block commit)
+                                    ↓
+                        No NEW? → PASS (allow commit)
+                                    ↓
+                        3 failures? → Escalate to human
 ```
+
+## Acknowledgments
+
+### The Ralph Loop
+
+This project builds on the **Ralph Loop** methodology created by [Geoffrey Huntley](https://x.com/GeoffreyHuntley). His original work on autonomous AI development loops ([ghuntley.com/ralph](https://ghuntley.com/ralph/), [ghuntley.com/loop](https://ghuntley.com/loop/)) pioneered the concept of "AFK movement" - letting AI agents work autonomously while humans step away. This project explores adding security practices into that loop: scan before commit, fix iteratively, escalate when stuck.
+
+### Open Source Tools
+
+- **[ASH](https://github.com/awslabs/automated-security-helper)** - AWS Labs' security scanner orchestrator
+- **[claude-code-transcripts](https://github.com/simonw/claude-code-transcripts)** - Simon Willison's transcript extractor
+- **[Semgrep](https://semgrep.dev)** - Multi-language static analysis
+- **[Grype](https://github.com/anchore/grype)** - Vulnerability scanner for containers and filesystems
+- **[Checkov](https://www.checkov.io)** - Infrastructure-as-Code security scanner
+- **[detect-secrets](https://github.com/Yelp/detect-secrets)** - Credential detection by Yelp
 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-pip install semgrep
+# 1. Clone this repo
+git clone https://github.com/yourorg/securing-ralph-loop.git
+cd securing-ralph-loop
+
+# 2. Install prerequisites
+npm install -g @anthropic-ai/claude-code
+curl -LsSf https://astral.sh/uv/install.sh | sh
 brew install jq
 
-# 2. Run the loop (PRD is auto-initialized from template)
-./ralph-secure.sh 10 /path/to/my-project
-# Edit state/my-project/prd.json with your user stories
+# 3. Run on your project
+./ralph-secure.sh /path/to/your-project
+
+# 4. Edit the PRD with your user stories
+nano state/your-project/prd.json
 ```
 
 ## Prerequisites
 
-| Tool | Required | Installation |
-|------|----------|--------------|
-| Claude Code CLI | Yes | `npm install -g @anthropic-ai/claude-code` |
-| uv | Yes | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| jq | Yes | `brew install jq` |
+| Tool | Installation |
+|------|--------------|
+| Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
+| uv | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| jq | `brew install jq` |
 
 ## Usage
 
 ```bash
-# Basic usage (10 iterations max, current directory)
-./ralph-secure.sh
+# Basic - run on a project directory
+./ralph-secure.sh /path/to/project
 
-# Target a specific directory (auto-derives project name)
-./ralph-secure.sh 10 /path/to/my-app
-# Creates state/my-app/ with prd.json
+# With options
+./ralph-secure.sh --max-iterations 5 --target /path/to/project
 
-# Explicit project name
-./ralph-secure.sh --project my-app --target /path/to/project
-
-# Short form
-./ralph-secure.sh -p my-app -t /path/to/project -m 10
-
+# All options
+./ralph-secure.sh \
+  --project my-app \
+  --target /path/to/project \
+  --max-iterations 10 \
+  --slack-webhook https://hooks.slack.com/... \
+  --no-create-issues
 ```
 
-### Multi-Project Support
+### Options
 
-Securing Ralph Loop supports running multiple projects in parallel with isolated state:
-
-```bash
-# Project A (terminal 1)
-./ralph-secure.sh 10 /path/to/project-a
-# State stored in: state/project-a/
-
-# Project B (terminal 2)
-./ralph-secure.sh 10 /path/to/project-b
-# State stored in: state/project-b/
-
-# Override project name if needed
-./ralph-secure.sh --project custom-name --target /path/to/project
-# State stored in: state/custom-name/
-```
-
-Each project gets its own:
-- `prd.json` - User stories
-- `security-audit.jsonl` - Audit trail
-- Session/branch tracking files
-- Escalation reports
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `RALPH_MAX_RETRIES` | Max remediation attempts per failure | 3 |
-| `RALPH_SLACK_WEBHOOK` | Slack webhook for notifications | - |
-| `RALPH_CREATE_ISSUE` | Create GitHub issue on escalation | false |
-
-The following are exported for child scripts:
-
-| Variable | Description |
-|----------|-------------|
-| `RALPH_PROJECT_NAME` | Current project name (derived or explicit) |
-| `RALPH_PROJECT_STATE_DIR` | Full path to project's state directory |
-
-## How It Works
-
-### 1. Pre-flight Checks
-
-Before starting, the orchestrator validates:
-- Required tools are installed (Claude CLI, uv, jq)
-- PRD file exists and is valid JSON
-- Git repository is initialized
-
-### 2. Development Iterations
-
-Each iteration:
-1. Builds a prompt from `prompt.md` (+ any security context)
-2. Spawns Claude Code with injected security skills
-3. Claude implements one user story from the PRD
-4. Commits changes
-
-### 3. Security Scanning
-
-Before each commit, Claude runs `/security-scan` internally:
-- **ASH (Automated Security Helper)**: Bundles multiple scanners
-- **Semgrep**: Static analysis for code vulnerabilities
-- **Grype**: Dependency vulnerability scanning (no auth required)
-
-### 4. Decision Gate
-
-Based on scan results:
-- **PASS**: Move to next iteration
-- **FAIL**: Enter remediation loop
-  - Rollback commit
-  - Inject security context into prompt
-  - Re-spawn Claude Code
-  - Repeat up to 3 times
-- **EXHAUSTED**: Escalate to human review
-
-### 5. Audit Trail
-
-All operations are logged to `state/security-audit.jsonl` in JSON Lines format for compliance and debugging.
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--target DIR` | `-t` | Target project directory |
+| `--project NAME` | `-p` | Project name (default: derived from directory) |
+| `--max-iterations N` | `-m` | Max iterations (default: 10) |
+| `--slack-webhook URL` | `-s` | Slack webhook for escalations |
+| `--no-create-issues` | | Skip GitHub issues for pre-existing vulns |
+| `--verbose` | `-v` | Show raw Claude output |
+| `--help` | `-h` | Show help |
 
 ## PRD Format
 
-Create your PRD at `state/{project}/prd.json` (auto-initialized from `prd.json.example`):
+User stories go in `state/{project}/prd.json`:
 
 ```json
 {
-  "projectName": "My Project",
+  "projectName": "My App",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Feature Name",
-      "description": "As a user, I want...",
-      "acceptanceCriteria": [
-        "Criterion 1",
-        "Criterion 2"
-      ],
+      "title": "Add login page",
+      "description": "As a user, I want to log in with email/password",
+      "acceptanceCriteria": ["Form validates email", "Shows error on failure"],
       "passes": false
     }
   ]
 }
 ```
 
-## Security Model
+Set `passes: false` for stories you want Claude to implement.
 
-| Threat | Mitigation |
-|--------|------------|
-| Malicious code generation | Internal ASH/Semgrep validates code before commit |
-| Vulnerable dependencies | Internal Grype scans dependency vulnerabilities |
-| Secret leakage | Semgrep rules + Claude Code hooks detect secrets |
-| Sandbox escape | Command validation hooks + permission whitelist |
-| Runaway execution | Iteration limits + cost caps |
-| Audit gap | Comprehensive JSON Lines logging |
-| Permission creep | Minimal tool allowlist per skill |
-| Compromised iteration | Rollback + human escalation |
+## What It Does
 
-## Directory Structure
+1. Spawns Claude Code on your project
+2. Claude implements user stories from the PRD
+3. Before each commit, runs security scan (ASH/Semgrep/Grype)
+4. If scan fails, Claude fixes issues (up to 3 retries)
+5. If still failing, escalates to human review
+6. Repeats until all stories pass or max iterations reached
 
-```
-securing-ralph-loop/
-├── ralph-secure.sh              # Main orchestrator
-├── prompt.md                    # Base instructions for Claude
-├── prd.json.example             # PRD template
-├── CLAUDE.md                    # Project documentation
-├── README.md                    # This file
-├── .gitignore                   # Excludes state/
-│
-├── .claude/                     # Claude Code config
-│   ├── settings.local.json      # Hooks + permissions
-│   ├── skills/                  # Available skills
-│   │   ├── code-review/
-│   │   ├── self-check/
-│   │   └── fix-security/
-│   ├── hooks/                   # Security hooks
-│   └── commands/                # Quick commands
-│
-├── scripts/                     # HOST-side scripts
-│   ├── pre-flight.sh            # Validates prerequisites
-│   ├── audit-log.sh             # Records iteration results
-│   ├── log-progress.sh          # Human-readable progress logging
-│   ├── report-preexisting.sh    # Creates GitHub issues for baseline vulns
-│   └── escalate.sh              # Escalation when max retries exhausted
-│
-├── config/
-│   └── thresholds.json
-│
-└── state/                       # Runtime state (gitignored)
-    ├── .gitkeep                 # Keeps directory in git
-    ├── my-app/                  # Per-project state (auto-created)
-    │   ├── prd.json
-    │   ├── security-audit.jsonl
-    │   ├── .session-branch
-    │   ├── .original-branch
-    │   └── escalation-report-*.md
-    └── another-project/         # Multiple projects supported
-        └── ...
-```
+## Documentation
 
-## Customization
-
-### Adding Semgrep Rules
-
-Edit `.ash/rules/semgrep-rules.yml` to add custom rules:
-
-```yaml
-rules:
-  - id: my-custom-rule
-    patterns:
-      - pattern: dangerous_function($X)
-    message: "Don't use dangerous_function"
-    severity: ERROR
-    languages: [python]
-```
-
-### Adjusting Thresholds
-
-Edit `config/thresholds.json` to change pass/fail criteria:
-
-```json
-{
-  "semgrep": {
-    "failOn": {
-      "error": true,
-      "warning": false
-    }
-  }
-}
-```
-
-### Custom Skills
-
-Add skills in `.claude/skills/<name>/SKILL.md`:
-
-```markdown
----
-name: my-skill
-description: What it does
-allowed-tools: Read, Edit
----
-
-# Skill Instructions
-...
-```
-
-## Troubleshooting
-
-### Pre-flight fails: "uv not found"
-
-Install uv:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### Pre-flight fails: "semgrep not found"
-
-Install Semgrep:
-```bash
-pip install semgrep
-# or
-brew install semgrep
-```
-
-### Remediation loop stuck
-
-If Claude keeps producing the same vulnerable code:
-1. Check `state/security-context.md` for the findings
-2. Review the Semgrep rules - might be a false positive
-3. Update the PRD with more specific security requirements
-
-### Escalation triggered
-
-When human review is needed:
-1. Check `state/{project}/escalation-report-*.md`
-2. Review the security findings
-3. Manually fix the issues
-4. Re-run the loop
+- [How It Works](Docs/how-it-works.md) - Architecture and flow
+- [Security Model](Docs/security-model.md) - Threat mitigations
+- [Customization](Docs/customization.md) - Custom rules and thresholds
+- [Troubleshooting](Docs/troubleshooting.md) - Common issues
 
 ## License
 

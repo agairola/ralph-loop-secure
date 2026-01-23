@@ -26,24 +26,6 @@
     ]
   },
 
-  "snyk": {
-    "enabled": true,
-    "severityThreshold": "medium",
-    "failOn": {
-      "critical": true,
-      "high": true,
-      "medium": false,
-      "low": false
-    },
-    "maxVulnerabilities": {
-      "critical": 0,
-      "high": 0,
-      "medium": 5,
-      "low": -1
-    },
-    "ignoredVulnerabilities": []
-  },
-
   "remediation": {
     "maxRetries": 3,
     "rollbackOnFailure": true,
@@ -65,21 +47,18 @@
 
   "notifications": {
     "slack": {
-      "enabled": false,
-      "webhookEnvVar": "RALPH_SLACK_WEBHOOK",
-      "notifyOn": ["escalation", "completion", "failure"]
+      "notifyOn": ["escalation", "completion", "failure"],
+      "_note": "Webhook URL set via CLI: --slack-webhook URL"
     },
     "github": {
-      "enabled": false,
-      "createIssueOnEscalation": false,
       "labels": ["security", "automated", "ralph-loop"]
     }
   },
 
   "baseline": {
     "enabled": true,
-    "create_security_issues": true,
     "issue_labels": ["security-debt", "ralph-detected"],
-    "dedup_by_file": true
+    "dedup_by_file": true,
+    "_note": "GitHub issue creation controlled via CLI: --no-create-issues to disable"
   }
 }

@@ -10,12 +10,12 @@ Apply fixes for security vulnerabilities identified by external scanners.
 
 ## Purpose
 
-This skill is invoked during the remediation loop when external security scanners (Semgrep, Snyk) have identified vulnerabilities. It reads the security context and applies targeted fixes.
+This skill is invoked during the remediation loop when external security scanners (Semgrep, ASH) have identified vulnerabilities. It reads the security context and applies targeted fixes.
 
 ## When This Skill Is Used
 
 1. External Semgrep scan detected SAST issues
-2. External Snyk scan detected vulnerable dependencies
+2. External Grype scan (via ASH) detected vulnerable dependencies
 3. The orchestrator has injected security context into `state/security-context.md`
 
 ## Process

@@ -158,21 +158,29 @@ All paths below with `{project}` are per-project (e.g., `state/my-app/prd.json`)
 
 ## Environment Variables
 
-When running inside the loop, these environment variables are available:
+When running inside the loop, these environment variables are available (for internal use by skills):
 
 | Variable | Description |
 |----------|-------------|
 | `RALPH_PROJECT_NAME` | Current project name |
 | `RALPH_PROJECT_STATE_DIR` | Full path to project state directory |
 | `RALPH_TARGET_DIR` | Full path to target directory |
-| `RALPH_CREATE_SECURITY_ISSUES` | Create GitHub issues for pre-existing vulns (default: `true`) |
+
+## CLI Options
+
+The orchestrator accepts these options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-s, --slack-webhook URL` | Slack webhook for escalation notifications | (none) |
+| `--no-create-issues` | Disable GitHub issue creation for pre-existing vulns | creates issues |
 
 ### Opt-out of GitHub Issue Creation
 
 To disable automatic GitHub issue creation for pre-existing vulnerabilities:
 
 ```bash
-RALPH_CREATE_SECURITY_ISSUES=false ./ralph-secure.sh /path/to/project
+./ralph-secure.sh --no-create-issues /path/to/project
 ```
 
 When disabled:

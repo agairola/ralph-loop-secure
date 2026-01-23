@@ -6,9 +6,6 @@
 # Usage:
 #   report-preexisting.sh <findings_file> <project_name>
 #
-# Environment:
-#   RALPH_CREATE_SECURITY_ISSUES - Set to "false" to skip issue creation (default: true)
-#
 
 set -e
 
@@ -54,7 +51,7 @@ fi
 
 # If issue creation is disabled, just log and exit
 if [ "$CREATE_ISSUES" = "false" ]; then
-    log_info "Skipped" "GitHub issue creation (RALPH_CREATE_SECURITY_ISSUES=false)"
+    log_info "Skipped" "GitHub issue creation (--no-create-issues)"
     exit 0
 fi
 

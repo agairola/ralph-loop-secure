@@ -11,6 +11,14 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
 PROJECT_NAME="${RALPH_PROJECT_NAME:-unknown}"
 
+# Colors (same as ralph-secure.sh)
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Log functions (same as ralph-secure.sh)
+log_label() { printf "  %-16s │ %s\n" "$1" "$2"; }
+log_warn()  { printf "  ${YELLOW}⚠${NC} %-14s │ %s\n" "$1" "$2"; }
+
 # Arguments
 ITERATION="${1:-0}"
 SCAN_RESULT="${2:-UNKNOWN}"
@@ -107,16 +115,15 @@ After fixing the issues:
 EOF
 
 echo ""
-echo "============================================="
-echo "  SECURITY ESCALATION - HUMAN REVIEW NEEDED"
-echo "============================================="
+echo -e "  ${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "  ${YELLOW}⚠${NC} Escalation - Human Review Required"
+echo -e "  ${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
-echo "Project: $PROJECT_NAME"
-echo "Iteration: $ITERATION"
-echo "Branch: $GIT_BRANCH"
-echo "Result: $SCAN_RESULT"
-echo ""
-echo "Report saved to: $REPORT_FILE"
+log_label "Project" "$PROJECT_NAME"
+log_label "Iteration" "$ITERATION"
+log_label "Branch" "$GIT_BRANCH"
+log_label "Result" "$SCAN_RESULT"
+log_label "Report" "$REPORT_FILE"
 echo ""
 
 # Attempt to notify via various methods
@@ -142,15 +149,7 @@ if [ -n "$SLACK_WEBHOOK" ]; then
         "$SLACK_WEBHOOK" > /dev/null 2>&1 || true
 fi
 
-# 5. GitHub Issue (if gh is available and configured)
-if command -v gh &> /dev/null && [ "${RALPH_CREATE_ISSUE:-false}" = "true" ]; then
-    gh issue create \
-        --title "Security Escalation: [$PROJECT_NAME] $GIT_BRANCH" \
-        --body "$(cat "$REPORT_FILE")" \
-        --label "security,escalation" 2>/dev/null || true
-fi
-
-echo "Review the report and fix the issues manually."
+echo "  Review the report and fix the issues manually."
 echo ""
 
 exit 1

@@ -10,9 +10,6 @@
 #   ./ralph-secure.sh --project my-app --target /path/to/project --max-iterations 10
 #   ./ralph-secure.sh -p my-app -t /path/to/project -m 10
 #
-# Environment Variables:
-#   RALPH_SLACK_WEBHOOK           - Slack webhook for escalation notifications
-#   RALPH_CREATE_SECURITY_ISSUES  - Create GitHub issues for pre-existing vulns (default: true)
 #
 
 set -e
@@ -28,6 +25,8 @@ VERSION="0.1.0"
 MAX_ITERATIONS=""
 TARGET_DIR=""
 PROJECT_NAME=""
+SLACK_WEBHOOK=""
+CREATE_SECURITY_ISSUES=true
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -48,6 +47,14 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
+        -s|--slack-webhook)
+            SLACK_WEBHOOK="$2"
+            shift 2
+            ;;
+        --no-create-issues)
+            CREATE_SECURITY_ISSUES=false
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options] [max_iterations] [target_dir]"
             echo ""
@@ -56,6 +63,8 @@ while [[ $# -gt 0 ]]; do
             echo "  -t, --target DIR         Target directory to work in"
             echo "  -m, --max-iterations N   Maximum iterations (default: 10)"
             echo "  -v, --verbose            Show raw Claude output instead of progress bar"
+            echo "  -s, --slack-webhook URL  Slack webhook for escalation notifications"
+            echo "  --no-create-issues       Disable GitHub issue creation for pre-existing vulns"
             echo "  -h, --help               Show this help message"
             echo ""
             echo "Positional arguments (legacy):"
@@ -229,6 +238,8 @@ initialize_project_state "$PROJECT_STATE_DIR"
 export RALPH_PROJECT_NAME="$PROJECT_NAME"
 export RALPH_PROJECT_STATE_DIR="$PROJECT_STATE_DIR"
 export RALPH_TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+export RALPH_SLACK_WEBHOOK="$SLACK_WEBHOOK"
+export RALPH_CREATE_SECURITY_ISSUES="$CREATE_SECURITY_ISSUES"
 
 # Colors for output
 RED='\033[0;31m'
@@ -335,9 +346,7 @@ report_preexisting_vulnerabilities() {
     local findings_file="$1"
 
     # Check if GitHub issue creation is enabled
-    local create_issues="${RALPH_CREATE_SECURITY_ISSUES:-true}"
-
-    if [ "$create_issues" = "false" ]; then
+    if [ "$CREATE_SECURITY_ISSUES" = "false" ]; then
         return 0
     fi
 
@@ -590,7 +599,7 @@ show_session_summary() {
             echo "  └─────────────────────────────────────┴──────────┴────────┘"
 
             # Show GitHub issues if created
-            if [ "${RALPH_CREATE_SECURITY_ISSUES:-true}" = "true" ]; then
+            if [ "$CREATE_SECURITY_ISSUES" = "true" ]; then
                 log_info "GitHub" "Issues created for tracking (label: security-debt)"
             fi
         fi
