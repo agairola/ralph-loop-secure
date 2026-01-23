@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Security scan threshold configuration for Ralph Loop Secure",
+  "description": "Security scan threshold configuration for Securing Ralph Loop",
 
   "semgrep": {
     "enabled": true,
@@ -74,5 +74,12 @@
       "createIssueOnEscalation": false,
       "labels": ["security", "automated", "ralph-loop"]
     }
+  },
+
+  "baseline": {
+    "enabled": true,
+    "create_security_issues": true,
+    "issue_labels": ["security-debt", "ralph-detected"],
+    "dedup_by_file": true
   }
 }

@@ -91,5 +91,3 @@ CHANGED_FILES=$(cd "$TARGET_DIR" && git diff --name-only HEAD~1 2>/dev/null || e
     echo "---"
 
 } >> "$PROGRESS_FILE"
-
-echo "Progress logged: iteration=$ITERATION status=$STATUS"

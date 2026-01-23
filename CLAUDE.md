@@ -1,10 +1,10 @@
-# CLAUDE.md - Ralph Loop Secure
+# CLAUDE.md - Securing Ralph Loop
 
-This file provides guidance to Claude Code when operating within the Ralph Loop Secure orchestration system.
+This file provides guidance to Claude Code when operating within the Securing Ralph Loop orchestration system.
 
 ## Context
 
-You are running inside **Ralph Loop Secure**, a security-hardened orchestration system. Security scanning runs INSIDE your session via the `/security-scan` skill, giving you direct control over the scan-fix-retry cycle.
+You are running inside **Securing Ralph Loop**, a security-hardened orchestration system. Security scanning runs INSIDE your session via the `/security-scan` skill, giving you direct control over the scan-fix-retry cycle.
 
 ## Your Constraints
 
@@ -73,9 +73,25 @@ result = ast.literal_eval(safe_input)
 
 Note: The `{project}` placeholder is automatically derived from your target directory name, or can be set explicitly with `--project`.
 
-## If Security Scan Fails
+## Security Scan: New vs Pre-Existing Findings
 
-When `/security-scan` returns FAIL:
+The security scan distinguishes between **NEW** and **PRE-EXISTING** findings:
+
+- **NEW Findings**: Introduced by your current changes - these block commits
+- **PRE-EXISTING Findings**: Existed before your work started - tracked but don't block
+
+This allows you to proceed with legitimate work without being blocked by inherited security debt.
+
+### How It Works
+
+1. At session start, a **baseline** is captured (`security-baseline.json`)
+2. When you run `/security-scan`, findings are compared against the baseline
+3. Only NEW findings (not in baseline) cause a FAIL
+4. Pre-existing findings are logged and optionally create GitHub issues
+
+### If Security Scan Fails
+
+When `/security-scan` returns FAIL (due to NEW findings):
 
 1. **Read findings carefully** - file:line, severity, message
 2. **Fix each issue** using secure patterns above
@@ -131,6 +147,8 @@ All paths below with `{project}` are per-project (e.g., `state/my-app/prd.json`)
 | `state/{project}/prd.json` | User stories to implement |
 | `state/{project}/progress.txt` | Learnings from previous iterations |
 | `state/{project}/security-audit.jsonl` | Audit log (don't modify) |
+| `state/{project}/security-baseline.json` | Pre-existing vulnerabilities baseline |
+| `state/{project}/preexisting-findings.json` | Current session's pre-existing findings |
 | `state/{project}/transcripts/` | Session transcripts for each iteration |
 | `prompt.md` | Base instructions |
 | `.ash/ash.yaml` | ASH security scanner configuration |
@@ -146,3 +164,18 @@ When running inside the loop, these environment variables are available:
 |----------|-------------|
 | `RALPH_PROJECT_NAME` | Current project name |
 | `RALPH_PROJECT_STATE_DIR` | Full path to project state directory |
+| `RALPH_TARGET_DIR` | Full path to target directory |
+| `RALPH_CREATE_SECURITY_ISSUES` | Create GitHub issues for pre-existing vulns (default: `true`) |
+
+### Opt-out of GitHub Issue Creation
+
+To disable automatic GitHub issue creation for pre-existing vulnerabilities:
+
+```bash
+RALPH_CREATE_SECURITY_ISSUES=false ./ralph-secure.sh /path/to/project
+```
+
+When disabled:
+- Pre-existing findings are still tracked in the audit log
+- They are still displayed in the session summary
+- No GitHub issues are created

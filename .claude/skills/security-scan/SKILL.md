@@ -1,12 +1,12 @@
 ---
 name: security-scan
-description: Run ASH (Automated Security Helper) security scan
+description: Run ASH (Automated Security Helper) security scan with delta detection
 allowed-tools: Read, Grep, Glob, Bash(uvx:*), Bash(ash:*), Bash(jq:*), Bash(git:diff|status|log), Bash(cat:*), Bash(mkdir:*)
 ---
 
 # Security Scan
 
-Run ASH (Automated Security Helper) - a comprehensive security scanning tool that bundles multiple scanners into a unified interface.
+Run ASH (Automated Security Helper) - a comprehensive security scanning tool that bundles multiple scanners into a unified interface. This skill includes **delta detection** to distinguish NEW findings (your changes) from PRE-EXISTING findings (inherited security debt).
 
 ## Purpose
 
@@ -35,16 +35,19 @@ This skill performs security scanning using ASH, which includes:
 
 Run this skill after implementing a story and staging changes, but BEFORE committing.
 
-## Process
+## Scan Process
 
-1. **Get Changed Files**: Identify staged/changed files using git
-2. **Run ASH**: Execute ASH in local mode against the project
-3. **Parse Results**: Read unified JSON output from ASH
-4. **Report**: Output structured results for Claude to act on
+1. **Run ASH**: Execute ASH scan against the project
+2. **Load Baseline**: Read `state/{project}/security-baseline.json` (pre-existing findings)
+3. **Classify Findings**: Compare each finding against baseline
+   - **NEW**: Finding not in baseline (introduced by your changes)
+   - **PRE-EXISTING**: Finding exists in baseline (inherited security debt)
+4. **Report**: Output both categories separately
+5. **PASS/FAIL**: Decision based on **NEW findings only**
 
 ## Scan Execution
 
-### Run ASH
+### Step 1: Run ASH
 
 ```bash
 # Create output directory
@@ -55,7 +58,42 @@ uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 \
   ash --mode local --source-dir . --output-dir .ash/ash_output
 ```
 
-### Check Results
+### Step 2: Load Baseline
+
+```bash
+# Read baseline from Ralph Loop state directory
+# The baseline was captured at the start of the session, before you made changes
+cat "$RALPH_PROJECT_STATE_DIR/security-baseline.json" | jq '.'
+```
+
+The baseline file contains findings captured before you started working:
+```json
+[
+  {"file": "src/old-file.ts", "line": 15, "rule_id": "dangerous-eval", "severity": "ERROR"},
+  ...
+]
+```
+
+### Step 3: Classify Findings
+
+Compare current scan results against the baseline:
+
+```bash
+# Read current findings
+CURRENT=$(cat .ash/ash_output/ash_aggregated_results.json | jq -c '[.findings[]?]')
+
+# Read baseline
+BASELINE=$(cat "$RALPH_PROJECT_STATE_DIR/security-baseline.json" 2>/dev/null || echo "[]")
+
+# A finding is NEW if it's not in the baseline
+# Compare by: file + line + rule_id (signature matching)
+```
+
+**Classification Logic:**
+- **NEW Finding**: `{file, line, rule_id}` tuple NOT found in baseline
+- **PRE-EXISTING Finding**: `{file, line, rule_id}` tuple found in baseline AND file not modified in current changes
+
+### Step 4: Check Results
 
 ```bash
 # Read aggregated results
@@ -79,13 +117,13 @@ ASH generates unified output in `.ash/ash_output/`:
 
 ## Output Format
 
-After running ASH, report findings in this format:
+After running ASH and classifying findings, report in this format:
 
 ```
 === Security Scan Results ===
-Status: PASS | FAIL
+Status: PASS | FAIL (based on NEW findings only)
 
-ASH Findings (N total):
+NEW Findings (N total):
 - [ERROR] file:line - scanner/rule-id
   Message: Description of the vulnerability
   Fix: Recommended remediation
@@ -94,31 +132,49 @@ ASH Findings (N total):
   Message: Description
   Fix: Recommendation
 
-Dependency Vulnerabilities (N total):
+PRE-EXISTING Findings (M total):
+  ⚠ These findings existed before your changes
+  ⚠ They do NOT block your commit
+
+- [ERROR] src/lib/old-file.ts:15 - dangerous-eval
+  This file was not modified in your changes.
+  Recommendation: Create GitHub issue for tracking.
+
+Dependency Vulnerabilities (P total):
 - [HIGH] package@version - CVE-YYYY-XXXXX
   Title: Vulnerability title
   Fix: Upgrade to version X.Y.Z
 
 === Summary ===
-Total: X findings (Y errors, Z warnings)
+NEW: X findings (blocking)
+PRE-EXISTING: Y findings (tracked, non-blocking)
 Overall: PASS | FAIL
 ```
 
 ## Decision Logic
 
-- **PASS**: No ERROR-level findings, no HIGH severity vulnerabilities
-- **FAIL**: Any ERROR-level finding OR any HIGH severity vulnerability
+**PASS/FAIL is based on NEW findings only:**
 
-Warnings and medium-severity findings are reported but don't cause a FAIL.
+- **PASS**: No NEW ERROR-level findings, no NEW HIGH severity vulnerabilities
+- **FAIL**: Any NEW ERROR-level finding OR any NEW HIGH severity vulnerability
+
+**Pre-existing findings are:**
+- Reported for visibility
+- Logged to audit trail
+- Tracked via GitHub issues (if enabled)
+- **NOT blocking** - they don't cause FAIL
+
+This allows you to proceed with legitimate work without being blocked by inherited security debt.
 
 ## After Scanning
 
-### If PASS
+### If PASS (new code is clean)
 - Proceed to commit
 - Update PRD to mark story complete
+- Pre-existing issues are tracked but don't block you
 
-### If FAIL
-1. Read each finding carefully (file:line provided)
+### If FAIL (new code has issues)
+1. Read each NEW finding carefully (file:line provided)
 2. Apply fix using secure coding patterns from CLAUDE.md
 3. Stage the fixes: `git add -A`
 4. Re-run `/security-scan`
@@ -132,7 +188,7 @@ Warnings and medium-severity findings are reported but don't cause a FAIL.
 
 ## GitHub Issue Escalation
 
-When stuck after 3 attempts:
+When stuck after 3 attempts on NEW findings:
 
 ```bash
 gh issue create \
@@ -152,8 +208,20 @@ gh issue create \
 Story: [STORY_ID] - [STORY_TITLE]
 Files affected: [list files]
 
-Generated by Ralph Loop Secure" \
+Generated by Securing Ralph Loop" \
   --label "security,ralph-escalation"
+```
+
+## Pre-Existing Findings Tracking
+
+Pre-existing vulnerabilities found in the baseline are:
+1. **Logged** in the audit trail with classification
+2. **Reported** to GitHub issues (if `RALPH_CREATE_SECURITY_ISSUES=true`, which is the default)
+3. **Displayed** in session summary
+
+You can disable GitHub issue creation for pre-existing findings:
+```bash
+RALPH_CREATE_SECURITY_ISSUES=false ./ralph-secure.sh ...
 ```
 
 ## Thresholds
@@ -203,3 +271,9 @@ mkdir -p .ash/ash_output
 
 ### Scanner-specific issues
 Check individual scanner logs in `.ash/ash_output/logs/`
+
+### Baseline not found
+If `$RALPH_PROJECT_STATE_DIR/security-baseline.json` doesn't exist:
+- All findings will be treated as NEW
+- This is expected on first run or if baseline wasn't captured
+- Run `ralph-secure.sh` which handles baseline creation automatically

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "projectName": "Example Project",
-  "description": "A sample PRD demonstrating the expected format for Ralph Loop Secure",
+  "description": "A sample PRD demonstrating the expected format for Securing Ralph Loop",
   "targetDirectory": ".",
   "techStack": {
     "language": "python",

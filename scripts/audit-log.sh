@@ -55,11 +55,83 @@ else
 fi
 
 # Read detailed findings from ASH output if available (write to temp file to avoid ARG_MAX limits)
+# Use OCSF format which is a flat array with cleaner structure
 ASH_OUTPUT_DIR="$TARGET_DIR/.ash/ash_output"
-if [ -f "$ASH_OUTPUT_DIR/ash_aggregated_results.json" ]; then
-    jq -c '.' "$ASH_OUTPUT_DIR/ash_aggregated_results.json" > "$ASH_FINDINGS_TMP" 2>/dev/null || echo "null" > "$ASH_FINDINGS_TMP"
+OCSF_FILE="$ASH_OUTPUT_DIR/reports/ash.ocsf.json"
+if [ -f "$OCSF_FILE" ]; then
+    # Extract findings in normalized format from OCSF
+    jq -c '[
+        .[]? |
+        .vulnerabilities[0] as $v |
+        {
+            file: $v.affected_code[0].file.path,
+            line: $v.affected_code[0].start_line,
+            rule_id: $v.cve.uid,
+            severity: $v.severity,
+            message: $v.desc
+        }
+    ]' "$OCSF_FILE" > "$ASH_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$ASH_FINDINGS_TMP"
 else
-    echo "null" > "$ASH_FINDINGS_TMP"
+    echo "[]" > "$ASH_FINDINGS_TMP"
+fi
+
+# Classify findings as new vs pre-existing using baseline
+BASELINE_FILE="$STATE_DIR/security-baseline.json"
+NEW_FINDINGS_TMP=$(mktemp)
+PREEXISTING_FINDINGS_TMP=$(mktemp)
+GITHUB_ISSUES_TMP=$(mktemp)
+cleanup_classification() { rm -f "$NEW_FINDINGS_TMP" "$PREEXISTING_FINDINGS_TMP" "$GITHUB_ISSUES_TMP"; }
+trap 'cleanup_tmp; cleanup_classification' EXIT
+
+# Initialize empty arrays
+echo "[]" > "$NEW_FINDINGS_TMP"
+echo "[]" > "$PREEXISTING_FINDINGS_TMP"
+echo "[]" > "$GITHUB_ISSUES_TMP"
+
+if [ -f "$BASELINE_FILE" ] && [ -f "$ASH_FINDINGS_TMP" ] && [ "$(cat "$ASH_FINDINGS_TMP")" != "[]" ]; then
+    # Current findings are already in normalized format from OCSF extraction
+    CURRENT_FINDINGS=$(cat "$ASH_FINDINGS_TMP" 2>/dev/null || echo "[]")
+
+    # Load baseline (also in normalized format)
+    BASELINE=$(cat "$BASELINE_FILE" 2>/dev/null || echo "[]")
+
+    # Classify each finding by comparing signature (file:line:rule_id)
+    echo "$CURRENT_FINDINGS" | jq -c --argjson baseline "$BASELINE" '
+        . as $current |
+        ($baseline | map({key: "\(.file):\(.line):\(.rule_id)", value: .}) | from_entries) as $baseline_map |
+        {
+            new: [.[] | select($baseline_map["\(.file):\(.line):\(.rule_id)"] == null)],
+            preexisting: [.[] | select($baseline_map["\(.file):\(.line):\(.rule_id)"] != null)]
+        }
+    ' > /tmp/classified_findings.json 2>/dev/null || true
+
+    if [ -f /tmp/classified_findings.json ]; then
+        jq -c '.new // []' /tmp/classified_findings.json > "$NEW_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$NEW_FINDINGS_TMP"
+        jq -c '.preexisting // []' /tmp/classified_findings.json > "$PREEXISTING_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$PREEXISTING_FINDINGS_TMP"
+        rm -f /tmp/classified_findings.json
+    fi
+fi
+
+# Check for GitHub issues created for pre-existing findings
+PREEXISTING_REPORT="$STATE_DIR/preexisting-findings.json"
+if [ -f "$PREEXISTING_REPORT" ]; then
+    # Get unique files from pre-existing findings
+    FILES=$(jq -r '[.[].file // empty] | unique[]' "$PREEXISTING_REPORT" 2>/dev/null || true)
+    ISSUES=()
+    while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        # Check if issue exists for this file
+        ISSUE_NUM=$(cd "$TARGET_DIR" && gh issue list \
+            --label "security-debt" \
+            --search "Security: Pre-existing vulnerabilities in $file" \
+            --json number -q '.[0].number' 2>/dev/null || true)
+        if [ -n "$ISSUE_NUM" ]; then
+            ISSUES+=("#$ISSUE_NUM")
+        fi
+    done <<< "$FILES"
+
+    # Write issues array to temp file
+    printf '%s\n' "${ISSUES[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))' > "$GITHUB_ISSUES_TMP" 2>/dev/null || echo "[]" > "$GITHUB_ISSUES_TMP"
 fi
 
 # Get PRD progress snapshot
@@ -80,7 +152,15 @@ if [ "${RALPH_SKIP_DOCKER:-false}" = "true" ]; then
     RUN_MODE="no_docker"
 fi
 
-# Build JSON entry with session metadata
+# Determine if blocked by new findings
+NEW_COUNT=$(jq 'length' "$NEW_FINDINGS_TMP" 2>/dev/null || echo "0")
+PREEXISTING_COUNT=$(jq 'length' "$PREEXISTING_FINDINGS_TMP" 2>/dev/null || echo "0")
+BLOCKED_BY_NEW="false"
+if [ "$NEW_COUNT" != "0" ] && [ "$STATUS" = "FAIL" ]; then
+    BLOCKED_BY_NEW="true"
+fi
+
+# Build JSON entry with session metadata and finding classification
 JSON_ENTRY=$(jq -n \
     --arg timestamp "$TIMESTAMP" \
     --arg project "$PROJECT_NAME" \
@@ -99,6 +179,11 @@ JSON_ENTRY=$(jq -n \
     --arg mode "$RUN_MODE" \
     --arg transcript "$TRANSCRIPT_PATH" \
     --slurpfile ash_findings "$ASH_FINDINGS_TMP" \
+    --slurpfile new_findings "$NEW_FINDINGS_TMP" \
+    --slurpfile preexisting_findings "$PREEXISTING_FINDINGS_TMP" \
+    --slurpfile github_issues "$GITHUB_ISSUES_TMP" \
+    --arg blocked_by_new "$BLOCKED_BY_NEW" \
+    --arg preexisting_count "$PREEXISTING_COUNT" \
     --argjson prd_progress "${PRD_SNAPSHOT:-null}" \
     '{
         timestamp: $timestamp,
@@ -127,7 +212,15 @@ JSON_ENTRY=$(jq -n \
         },
         changed_files: ($changed_raw | split("\n") | map(select(. != ""))),
         findings: {
+            new: $new_findings[0],
+            preexisting: $preexisting_findings[0],
+            github_issues_created: $github_issues[0],
             ash: $ash_findings[0]
+        },
+        decision: {
+            blocked_by_new: ($blocked_by_new == "true"),
+            preexisting_count: ($preexisting_count | tonumber),
+            action: (if $status == "PASS" then "PASS - new code clean, pre-existing tracked" elif ($blocked_by_new == "true") then "FAIL - new findings must be fixed" else "FAIL - scan error" end)
         },
         prd_progress: $prd_progress
     }'
@@ -135,8 +228,5 @@ JSON_ENTRY=$(jq -n \
 
 # Append to audit log
 echo "$JSON_ENTRY" >> "$AUDIT_LOG"
-
-# Also output to stdout for visibility
-echo "Audit logged: iteration=$ITERATION status=$STATUS"
 
 exit 0

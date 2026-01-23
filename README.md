@@ -1,10 +1,10 @@
-# Ralph Loop Secure
+# Securing Ralph Loop
 
 Security-hardened orchestration shell script that spawns Claude Code instances with built-in security validation.
 
 ## Overview
 
-Ralph Loop Secure is an **external orchestrator** that runs Claude Code with automated security scanning. Security validation happens **outside** Claude Code using external tools (Semgrep, Snyk) on the HOST machine.
+Securing Ralph Loop is an **external orchestrator** that runs Claude Code with automated security scanning. Security validation happens **outside** Claude Code using external tools (Semgrep, Snyk) on the HOST machine.
 
 ```
 HOST MACHINE (ralph-secure.sh orchestrator)
@@ -68,7 +68,7 @@ RALPH_SKIP_DOCKER=true ./ralph-secure.sh
 
 ### Multi-Project Support
 
-Ralph Loop Secure supports running multiple projects in parallel with isolated state:
+Securing Ralph Loop supports running multiple projects in parallel with isolated state:
 
 ```bash
 # Project A (terminal 1)

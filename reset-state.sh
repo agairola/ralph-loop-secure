@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Reset State - Ralph Loop Secure
+# Reset State - Securing Ralph Loop
 # Resets target directory and cleans state (preserves prd.json)
 #
 # Usage:
@@ -84,7 +84,7 @@ PROJECT_STATE_DIR="$SCRIPT_DIR/state/$PROJECT_NAME"
 
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║           Ralph Loop Secure - Reset State                   ║${NC}"
+echo -e "${BLUE}║           Securing Ralph Loop - Reset State                 ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 

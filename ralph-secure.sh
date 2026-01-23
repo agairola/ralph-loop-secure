@@ -11,7 +11,8 @@
 #   ./ralph-secure.sh -p my-app -t /path/to/project -m 10
 #
 # Environment Variables:
-#   RALPH_SLACK_WEBHOOK  - Slack webhook for escalation notifications
+#   RALPH_SLACK_WEBHOOK           - Slack webhook for escalation notifications
+#   RALPH_CREATE_SECURITY_ISSUES  - Create GitHub issues for pre-existing vulns (default: true)
 #
 
 set -e
@@ -105,6 +106,7 @@ INJECTED_CLAUDE_MD=""
 INJECTED_RULES_DIR=""
 INJECTED_ASH_DIR=""
 INJECTED_GIT_EXCLUDE=""
+INJECTED_HOOK=""
 
 # Track progress monitor for cleanup
 PROGRESS_MONITOR_PID=""
@@ -164,6 +166,13 @@ cleanup_injected_files() {
     if [ -n "$INJECTED_GIT_EXCLUDE" ] && [ -f "$INJECTED_GIT_EXCLUDE" ]; then
         grep -v "$RALPH_EXCLUDE_MARKER" "$INJECTED_GIT_EXCLUDE" > "$INJECTED_GIT_EXCLUDE.tmp" 2>/dev/null || true
         mv "$INJECTED_GIT_EXCLUDE.tmp" "$INJECTED_GIT_EXCLUDE"
+    fi
+
+    # Cleanup pre-commit hook (silent)
+    if [ -n "$INJECTED_HOOK" ]; then
+        rm -f "$INJECTED_HOOK"
+        local backup="${INJECTED_HOOK}.ralph-backup"
+        [ -f "$backup" ] && mv "$backup" "$INJECTED_HOOK"
     fi
 }
 
@@ -238,6 +247,81 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m' # No Color
 
+# ===========================================
+# SECURITY BASELINE MANAGEMENT
+# ===========================================
+
+# Create security baseline from current HEAD (before Claude makes changes)
+# This captures pre-existing vulnerabilities for comparison
+create_security_baseline() {
+    local target_dir="$1"
+    local baseline_file="$PROJECT_STATE_DIR/security-baseline.json"
+    local baseline_output_dir="$PROJECT_STATE_DIR/.ash_baseline"
+
+    # Only create baseline once per branch (at first iteration)
+    if [ -f "$baseline_file" ]; then
+        return 0
+    fi
+
+    # Check if ASH is available
+    if ! command -v uvx &> /dev/null; then
+        echo "[]" > "$baseline_file"
+        return 0
+    fi
+
+    # Create baseline output directory
+    mkdir -p "$baseline_output_dir"
+
+    # Run ASH scan on current HEAD (silently)
+    cd "$target_dir"
+    uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 \
+        ash --mode local --source-dir . --output-dir "$baseline_output_dir" \
+        > /dev/null 2>&1 || true
+    cd - > /dev/null
+
+    # Extract finding signatures (file:line:rule_id) for comparison
+    # Use OCSF format which is a flat array with cleaner structure
+    local ocsf_results="$baseline_output_dir/reports/ash.ocsf.json"
+    if [ -f "$ocsf_results" ]; then
+        jq -c '[
+            .[]? |
+            .vulnerabilities[0] as $v |
+            {
+                file: $v.affected_code[0].file.path,
+                line: $v.affected_code[0].start_line,
+                rule_id: $v.cve.uid,
+                severity: $v.severity,
+                message: $v.desc
+            }
+        ]' "$ocsf_results" > "$baseline_file" 2>/dev/null || echo "[]" > "$baseline_file"
+    else
+        echo "[]" > "$baseline_file"
+    fi
+
+    # Store baseline creation timestamp
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$PROJECT_STATE_DIR/.baseline-timestamp"
+}
+
+# Report pre-existing vulnerabilities (creates GitHub issues with dedup)
+report_preexisting_vulnerabilities() {
+    local findings_file="$1"
+
+    # Check if GitHub issue creation is enabled
+    local create_issues="${RALPH_CREATE_SECURITY_ISSUES:-true}"
+
+    if [ "$create_issues" = "false" ]; then
+        return 0
+    fi
+
+    # Only report if we have findings
+    if [ ! -f "$findings_file" ] || [ "$(jq 'length' "$findings_file" 2>/dev/null)" = "0" ]; then
+        return 0
+    fi
+
+    # Call the report script
+    "$SCRIPT_DIR/scripts/report-preexisting.sh" "$findings_file" "$PROJECT_NAME"
+}
+
 # Logging - unified output format
 log_label() { printf "  %-16s │ %s\n" "$1" "$2"; }
 log_ok()    { printf "  ${GREEN}✓${NC} %-14s │ %s\n" "$1" "$2"; }
@@ -301,6 +385,7 @@ monitor_progress() {
     local spin_idx=0
     local start_time=$(date +%s)
     local current_step="Thinking"
+    local prev_step=""
 
     task="${task:0:40}"
 
@@ -351,11 +436,21 @@ monitor_progress() {
             *) step_color="$BLUE" ;;
         esac
 
-        # Use tput for cleaner line clearing
+        # When step changes, finalize old line and start new
         local spinner_char="${spinstr:$spin_idx:1}"
+        if [ "$current_step" != "$prev_step" ] && [ -n "$prev_step" ]; then
+            # Finalize previous step with checkmark
+            tput cr 2>/dev/null || printf "\r"
+            tput el 2>/dev/null || true
+            printf "  ${GREEN}✓${NC} %-14s │ %s ${DIM}[%02d:%02d]${NC}\n" \
+                "$prev_step" "$task" "$mins" "$secs"
+        fi
+        prev_step="$current_step"
+
+        # Display current step (overwrites same line until step changes)
         tput cr 2>/dev/null || printf "\r"
         tput el 2>/dev/null || true
-        printf "  %s ${step_color}%-16s${NC} │ %s ${DIM}[%02d:%02d]${NC}" \
+        printf "  %s ${step_color}%-14s${NC} │ %s ${DIM}[%02d:%02d]${NC}" \
             "$spinner_char" "$current_step" "$task" "$mins" "$secs"
 
         spin_idx=$(( (spin_idx + 1) % ${#spinstr} ))
@@ -441,6 +536,38 @@ show_session_summary() {
         fi
     fi
 
+    # Show pre-existing security findings summary
+    local baseline_file="$PROJECT_STATE_DIR/security-baseline.json"
+    local preexisting_report="$PROJECT_STATE_DIR/preexisting-findings.json"
+    if [ -f "$preexisting_report" ]; then
+        local preexisting_count=$(jq 'length' "$preexisting_report" 2>/dev/null || echo "0")
+        if [ "$preexisting_count" != "0" ] && [ "$preexisting_count" != "null" ]; then
+            echo ""
+            echo -e "  ${YELLOW}⚠${NC} Pre-existing Security Issues Detected:"
+            echo "  ────────────────────────────────────────────────────────────"
+
+            # Group by file and show summary table
+            local files=$(jq -r '[.[].file] | unique[]' "$preexisting_report" 2>/dev/null)
+            printf "  │ %-35s │ %-8s │ %-6s │\n" "File" "Severity" "Issues"
+            echo "  ├─────────────────────────────────────┼──────────┼────────┤"
+
+            while IFS= read -r file; do
+                [ -z "$file" ] && continue
+                local truncated_file="${file:0:35}"
+                local file_count=$(jq "[.[] | select(.file == \"$file\")] | length" "$preexisting_report" 2>/dev/null)
+                local max_severity=$(jq -r "[.[] | select(.file == \"$file\") | .severity] | if any(. == \"ERROR\") then \"ERROR\" elif any(. == \"HIGH\") then \"HIGH\" elif any(. == \"WARNING\") then \"WARNING\" else \"INFO\" end" "$preexisting_report" 2>/dev/null)
+                printf "  │ %-35s │ %-8s │ %-6s │\n" "$truncated_file" "$max_severity" "$file_count"
+            done <<< "$files"
+
+            echo "  └─────────────────────────────────────┴──────────┴────────┘"
+
+            # Show GitHub issues if created
+            if [ "${RALPH_CREATE_SECURITY_ISSUES:-true}" = "true" ]; then
+                log_info "GitHub" "Issues created for tracking (label: security-debt)"
+            fi
+        fi
+    fi
+
     echo ""
     echo "  Next steps:"
     echo "    git log $original_branch..$session_branch"
@@ -451,7 +578,7 @@ show_session_summary() {
 # Header - minimal unified output
 echo ""
 echo -e "${CYAN}╭─────────────────────────────────────────────────────────────╮${NC}"
-printf "${CYAN}│${NC}  Ralph Loop Secure v%-43s ${CYAN}│${NC}\n" "$VERSION"
+printf "${CYAN}│${NC}  Securing Ralph Loop v%-38s${CYAN}│${NC}\n" "$VERSION"
 echo -e "${CYAN}╰─────────────────────────────────────────────────────────────╯${NC}"
 echo ""
 log_label "Project" "$PROJECT_NAME"
@@ -490,6 +617,25 @@ echo "$SESSION_BRANCH" > "$PROJECT_STATE_DIR/.session-branch"
 log_label "Branch" "$SESSION_BRANCH"
 
 cd - > /dev/null
+echo ""
+
+# ===========================================
+# PHASE 2.5: SECURITY BASELINE
+# ===========================================
+
+# Capture pre-existing vulnerabilities before Claude makes changes
+# This allows us to distinguish new vs inherited security debt
+log_info "Baseline" "Checking for pre-existing vulnerabilities..."
+create_security_baseline "$TARGET_DIR"
+
+if [ -f "$PROJECT_STATE_DIR/security-baseline.json" ]; then
+    BASELINE_COUNT=$(jq 'length' "$PROJECT_STATE_DIR/security-baseline.json" 2>/dev/null || echo "0")
+    if [ "$BASELINE_COUNT" != "0" ] && [ "$BASELINE_COUNT" != "null" ]; then
+        log_warn "Baseline" "$BASELINE_COUNT pre-existing findings captured"
+    else
+        log_ok "Baseline" "No pre-existing vulnerabilities"
+    fi
+fi
 echo ""
 
 # ===========================================
@@ -595,6 +741,30 @@ for i in $(seq 1 $MAX_ITERATIONS); do
             } >> "$git_exclude"
             INJECTED_GIT_EXCLUDE="$git_exclude"
         fi
+
+        # Inject pre-commit hook to prevent committing ralph files
+        # This is the primary defense - automatically unstages injected files before any commit
+        local hook_file="$target/.git/hooks/pre-commit"
+        if [ -d "$target/.git/hooks" ]; then
+            # Backup existing hook if present
+            if [ -f "$hook_file" ]; then
+                cp "$hook_file" "$hook_file.ralph-backup"
+            fi
+
+            cat > "$hook_file" << 'HOOK'
+#!/bin/bash
+# Ralph Loop: Auto-unstage injected files before commit
+# This prevents accidentally committing ralph-loop configuration files
+git reset HEAD -- .claude/ CLAUDE.md .ash/ rules/ 2>/dev/null || true
+
+# Run original pre-commit hook if it existed
+if [ -f "$0.ralph-backup" ]; then
+    exec "$0.ralph-backup" "$@"
+fi
+HOOK
+            chmod +x "$hook_file"
+            INJECTED_HOOK="$hook_file"
+        fi
     }
 
     inject_claude_config "$TARGET_DIR"
@@ -648,14 +818,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
         elapsed=$(($(date +%s) - START_TIME))
         mins=$((elapsed / 60))
         secs=$((elapsed % 60))
-        printf "  ${GREEN}✓${NC} %-16s │ %s ${DIM}[%02d:%02d]${NC}\n" "Done" "$TASK_DISPLAY" "$mins" "$secs"
-
-        # Show last few lines of output for context
-        if [ -s "$PROGRESS_TMPFILE" ]; then
-            echo ""
-            echo -e "  ${CYAN}[Output]${NC}"
-            tail -20 "$PROGRESS_TMPFILE" | sed 's/^/  /'
-        fi
+        printf "  ${GREEN}✓${NC} %-14s │ %s ${DIM}[%02d:%02d]${NC}\n" "Done" "$TASK_DISPLAY" "$mins" "$secs"
     fi
 
     # Cleanup temp file
@@ -746,7 +909,7 @@ if [ -f "$SESSION_IDS_FILE" ] && [ -s "$SESSION_IDS_FILE" ]; then
             if [ -f "$SESSION_FILE" ]; then
                 uvx claude-code-transcripts json "$SESSION_FILE" \
                     -o "$PROJECT_STATE_DIR/transcripts" \
-                    --json 2>/dev/null || true
+                    --json > /dev/null 2>&1 || true
 
                 # Rename to iteration-based filename if extraction succeeded
                 if [ -f "$PROJECT_STATE_DIR/transcripts/index.html" ]; then
@@ -756,6 +919,32 @@ if [ -f "$SESSION_IDS_FILE" ] && [ -s "$SESSION_IDS_FILE" ]; then
             TRANSCRIPT_INDEX=$((TRANSCRIPT_INDEX + 1))
         fi
     done < "$SESSION_IDS_FILE"
+
+    # Show clean summary
+    if [ -d "$PROJECT_STATE_DIR/transcripts" ]; then
+        TRANSCRIPT_COUNT=$(ls -1 "$PROJECT_STATE_DIR/transcripts"/*.html 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$TRANSCRIPT_COUNT" -gt 0 ]; then
+            log_ok "Transcripts" "$TRANSCRIPT_COUNT iteration(s) saved to state/$PROJECT_NAME/transcripts/"
+        fi
+    fi
+fi
+
+# ----------------------------------------
+# REPORT PRE-EXISTING VULNERABILITIES
+# ----------------------------------------
+# Compare final scan results against baseline to identify pre-existing issues
+# and create GitHub issues for tracking them
+
+PREEXISTING_REPORT="$PROJECT_STATE_DIR/preexisting-findings.json"
+BASELINE_FILE="$PROJECT_STATE_DIR/security-baseline.json"
+
+if [ -f "$BASELINE_FILE" ]; then
+    # Copy baseline findings to preexisting report for summary display
+    # (In delta detection, these would be filtered by the security-scan skill)
+    cp "$BASELINE_FILE" "$PREEXISTING_REPORT" 2>/dev/null || true
+
+    # Report pre-existing vulnerabilities (create GitHub issues if enabled)
+    report_preexisting_vulnerabilities "$PREEXISTING_REPORT"
 fi
 
 # ----------------------------------------
