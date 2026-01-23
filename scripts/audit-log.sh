@@ -39,8 +39,17 @@ GIT_COMMIT_MSG=$(cd "$TARGET_DIR" && git log -1 --pretty=%s 2>/dev/null || echo 
 # Get changed files from TARGET directory (write to temp file to avoid ARG_MAX limits)
 CHANGED_FILES_TMP=$(mktemp)
 ASH_FINDINGS_TMP=$(mktemp)
-cleanup_tmp() { rm -f "$CHANGED_FILES_TMP" "$ASH_FINDINGS_TMP"; }
-trap cleanup_tmp EXIT
+NEW_FINDINGS_TMP=$(mktemp)
+PREEXISTING_FINDINGS_TMP=$(mktemp)
+GITHUB_ISSUES_TMP=$(mktemp)
+CLASSIFIED_FINDINGS_TMP=$(mktemp)
+
+# Consolidated cleanup - all temp files in one handler
+cleanup_all() {
+    rm -f "$CHANGED_FILES_TMP" "$ASH_FINDINGS_TMP" "$NEW_FINDINGS_TMP" \
+          "$PREEXISTING_FINDINGS_TMP" "$GITHUB_ISSUES_TMP" "$CLASSIFIED_FINDINGS_TMP"
+}
+trap cleanup_all EXIT
 cd "$TARGET_DIR" && git diff --name-only HEAD~1 2>/dev/null > "$CHANGED_FILES_TMP" || true
 
 # Determine overall status from ASH result
@@ -77,11 +86,6 @@ fi
 
 # Classify findings as new vs pre-existing using baseline
 BASELINE_FILE="$STATE_DIR/security-baseline.json"
-NEW_FINDINGS_TMP=$(mktemp)
-PREEXISTING_FINDINGS_TMP=$(mktemp)
-GITHUB_ISSUES_TMP=$(mktemp)
-cleanup_classification() { rm -f "$NEW_FINDINGS_TMP" "$PREEXISTING_FINDINGS_TMP" "$GITHUB_ISSUES_TMP"; }
-trap 'cleanup_tmp; cleanup_classification' EXIT
 
 # Initialize empty arrays
 echo "[]" > "$NEW_FINDINGS_TMP"
@@ -103,12 +107,11 @@ if [ -f "$BASELINE_FILE" ] && [ -f "$ASH_FINDINGS_TMP" ] && [ "$(cat "$ASH_FINDI
             new: [.[] | select($baseline_map["\(.file):\(.line):\(.rule_id)"] == null)],
             preexisting: [.[] | select($baseline_map["\(.file):\(.line):\(.rule_id)"] != null)]
         }
-    ' > /tmp/classified_findings.json 2>/dev/null || true
+    ' > "$CLASSIFIED_FINDINGS_TMP" 2>/dev/null || true
 
-    if [ -f /tmp/classified_findings.json ]; then
-        jq -c '.new // []' /tmp/classified_findings.json > "$NEW_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$NEW_FINDINGS_TMP"
-        jq -c '.preexisting // []' /tmp/classified_findings.json > "$PREEXISTING_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$PREEXISTING_FINDINGS_TMP"
-        rm -f /tmp/classified_findings.json
+    if [ -f "$CLASSIFIED_FINDINGS_TMP" ]; then
+        jq -c '.new // []' "$CLASSIFIED_FINDINGS_TMP" > "$NEW_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$NEW_FINDINGS_TMP"
+        jq -c '.preexisting // []' "$CLASSIFIED_FINDINGS_TMP" > "$PREEXISTING_FINDINGS_TMP" 2>/dev/null || echo "[]" > "$PREEXISTING_FINDINGS_TMP"
     fi
 fi
 

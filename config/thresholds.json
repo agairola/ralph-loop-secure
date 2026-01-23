@@ -8,22 +8,7 @@
       "error": true,
       "warning": false,
       "info": false
-    },
-    "maxFindings": {
-      "error": 0,
-      "warning": 10,
-      "info": -1
-    },
-    "ignoredRules": [],
-    "ignoredPaths": [
-      "**/test/**",
-      "**/tests/**",
-      "**/*.test.*",
-      "**/*.spec.*",
-      "**/node_modules/**",
-      "**/venv/**",
-      "**/.venv/**"
-    ]
+    }
   },
 
   "remediation": {
@@ -33,16 +18,12 @@
   },
 
   "iteration": {
-    "maxIterations": 10,
-    "timeoutSeconds": 3600,
-    "pauseBetweenIterations": 5
+    "maxIterations": 10
   },
 
   "audit": {
     "enabled": true,
-    "logPath": "state/security-audit.jsonl",
-    "retentionDays": 30,
-    "includeToolOutput": true
+    "logPath": "state/security-audit.jsonl"
   },
 
   "notifications": {

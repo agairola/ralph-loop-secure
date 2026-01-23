@@ -1,6 +1,6 @@
 # Securing Ralph Loop
 
-<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right">
+<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="120" align="right">
 
 Adding security practices to the Ralph Loop - scan, fix, repeat.
 

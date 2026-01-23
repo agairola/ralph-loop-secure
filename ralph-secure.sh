@@ -17,6 +17,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="0.1.0"
 
+# ASH (Automated Security Helper) installation URL
+ASH_URL="git+https://github.com/awslabs/automated-security-helper.git@v3.1.5"
+
 # ===========================================
 # ARGUMENT PARSING
 # ===========================================
@@ -26,7 +29,7 @@ MAX_ITERATIONS=""
 TARGET_DIR=""
 PROJECT_NAME=""
 SLACK_WEBHOOK=""
-CREATE_SECURITY_ISSUES=true
+CREATE_SECURITY_ISSUES="true"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -44,7 +47,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -v|--verbose)
-            VERBOSE=true
+            VERBOSE="true"
             shift
             ;;
         -s|--slack-webhook)
@@ -52,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --no-create-issues)
-            CREATE_SECURITY_ISSUES=false
+            CREATE_SECURITY_ISSUES="false"
             shift
             ;;
         -h|--help)
@@ -82,18 +85,10 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            # Positional arguments - detect if it's a path or a number
-            if [[ "$1" =~ ^[0-9]+$ ]]; then
-                # It's a number - treat as max_iterations
-                MAX_ITERATIONS="$1"
-            elif [[ "$1" == /* ]] || [[ "$1" == .* ]] || [[ -d "$1" ]]; then
-                # It's a path - treat as target_dir
-                TARGET_DIR="$1"
-            elif [ -z "$MAX_ITERATIONS" ]; then
-                # Fallback: first unknown arg is max_iterations
+            # Positional arguments: first is max_iterations, second is target_dir
+            if [ -z "$MAX_ITERATIONS" ]; then
                 MAX_ITERATIONS="$1"
             else
-                # Fallback: second unknown arg is target_dir
                 TARGET_DIR="$1"
             fi
             shift
@@ -121,7 +116,7 @@ PROGRESS_MONITOR_PID=""
 
 # Progress monitoring
 PROGRESS_TMPFILE=""
-VERBOSE=false
+VERBOSE="false"
 MAGENTA='\033[0;35m'
 
 # Marker for entries we add to .git/info/exclude
@@ -284,8 +279,7 @@ create_security_baseline() {
 
     # Run ASH scan on current HEAD (silently)
     cd "$target_dir"
-    uvx --from git+https://github.com/awslabs/automated-security-helper.git@v3.1.5 \
-        ash --mode local --source-dir . --output-dir "$baseline_output_dir" \
+    uvx --from "$ASH_URL" ash --mode local --source-dir . --output-dir "$baseline_output_dir" \
         > /dev/null 2>&1 || true
 
     # Run custom semgrep rules separately (ASH doesn't honor custom semgrep config)
@@ -359,13 +353,87 @@ report_preexisting_vulnerabilities() {
     "$SCRIPT_DIR/scripts/report-preexisting.sh" "$findings_file" "$PROJECT_NAME"
 }
 
+# Inject skills and CLAUDE.md into target directory
+# Claude discovers skills from cwd/.claude/skills/ and CLAUDE.md from cwd
+# --add-dir only grants file access, not config discovery
+inject_claude_config() {
+    local target="$1"
+    local source_claude="$SCRIPT_DIR/.claude"
+    local source_md="$SCRIPT_DIR/CLAUDE.md"
+    local target_claude="$target/.claude"
+    local target_md="$target/CLAUDE.md"
+    local git_exclude="$target/.git/info/exclude"
+
+    # Backup and inject .claude directory
+    if [ -d "$target_claude" ]; then
+        mv "$target_claude" "$target_claude.ralph-backup"
+    fi
+    cp -r "$source_claude" "$target_claude"
+    INJECTED_CLAUDE_DIR="$target_claude"
+
+    # Backup and inject CLAUDE.md
+    if [ -f "$target_md" ]; then
+        mv "$target_md" "$target_md.ralph-backup"
+    fi
+    cp "$source_md" "$target_md"
+    INJECTED_CLAUDE_MD="$target_md"
+
+    # Backup and inject .ash directory (ASH configuration + custom Semgrep rules)
+    local source_ash="$SCRIPT_DIR/.ash"
+    local target_ash="$target/.ash"
+    if [ -d "$source_ash" ]; then
+        if [ -d "$target_ash" ]; then
+            mv "$target_ash" "$target_ash.ralph-backup"
+        fi
+        cp -r "$source_ash" "$target_ash"
+        INJECTED_ASH_DIR="$target_ash"
+    fi
+
+    # Add entries to .git/info/exclude (local-only, never committed)
+    # This protects against files being staged if script crashes before cleanup
+    if [ -d "$target/.git/info" ]; then
+        mkdir -p "$target/.git/info"
+        {
+            echo ".claude/ $RALPH_EXCLUDE_MARKER"
+            echo "CLAUDE.md $RALPH_EXCLUDE_MARKER"
+            echo ".claude.ralph-backup/ $RALPH_EXCLUDE_MARKER"
+            echo "CLAUDE.md.ralph-backup $RALPH_EXCLUDE_MARKER"
+            echo ".ash/ $RALPH_EXCLUDE_MARKER"
+            echo ".ash.ralph-backup/ $RALPH_EXCLUDE_MARKER"
+        } >> "$git_exclude"
+        INJECTED_GIT_EXCLUDE="$git_exclude"
+    fi
+
+    # Inject pre-commit hook to prevent committing ralph files
+    # This is the primary defense - automatically unstages injected files before any commit
+    local hook_file="$target/.git/hooks/pre-commit"
+    if [ -d "$target/.git/hooks" ]; then
+        # Backup existing hook if present
+        if [ -f "$hook_file" ]; then
+            cp "$hook_file" "$hook_file.ralph-backup"
+        fi
+
+        cat > "$hook_file" << 'HOOK'
+#!/bin/bash
+# Ralph Loop: Auto-unstage injected files before commit
+# This prevents accidentally committing ralph-loop configuration files
+git reset HEAD -- .claude/ CLAUDE.md .ash/ 2>/dev/null || true
+
+# Run original pre-commit hook if it existed
+if [ -f "$0.ralph-backup" ]; then
+    exec "$0.ralph-backup" "$@"
+fi
+HOOK
+        chmod +x "$hook_file"
+        INJECTED_HOOK="$hook_file"
+    fi
+}
+
 # Logging - unified output format
 log_label() { printf "  %-16s │ %s\n" "$1" "$2"; }
 log_ok()    { printf "  ${GREEN}✓${NC} %-14s │ %s\n" "$1" "$2"; }
-log_info()  { printf "  %-16s │ %s\n" "$1" "$2"; }
 log_warn()  { printf "  ${YELLOW}⚠${NC} %-14s │ %s\n" "$1" "$2"; }
 log_error() { printf "  ${RED}✗${NC} %-14s │ %s\n" "$1" "$2"; }
-log_success() { printf "  ${GREEN}✓${NC} %-14s │ %s\n" "$1" "$2"; }
 
 # ===========================================
 # PROGRESS MONITORING (Real-time Step Detection)
@@ -600,7 +668,7 @@ show_session_summary() {
 
             # Show GitHub issues if created
             if [ "$CREATE_SECURITY_ISSUES" = "true" ]; then
-                log_info "GitHub" "Issues created for tracking (label: security-debt)"
+                log_label "GitHub" "Issues created for tracking (label: security-debt)"
             fi
         fi
     fi
@@ -662,7 +730,7 @@ echo ""
 
 # Capture pre-existing vulnerabilities before Claude makes changes
 # This allows us to distinguish new vs inherited security debt
-log_info "Baseline" "Checking for pre-existing vulnerabilities..."
+log_label "Baseline" "Checking for pre-existing vulnerabilities..."
 create_security_baseline "$TARGET_DIR"
 
 if [ -f "$PROJECT_STATE_DIR/security-baseline.json" ]; then
@@ -713,84 +781,6 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 
     CLAUDE_EXIT_CODE=0
 
-    # ----------------------------------------
-    # INJECT SKILLS AND CLAUDE.MD INTO TARGET
-    # ----------------------------------------
-    # Claude discovers skills from cwd/.claude/skills/ and CLAUDE.md from cwd
-    # --add-dir only grants file access, not config discovery
-    inject_claude_config() {
-        local target="$1"
-        local source_claude="$SCRIPT_DIR/.claude"
-        local source_md="$SCRIPT_DIR/CLAUDE.md"
-        local target_claude="$target/.claude"
-        local target_md="$target/CLAUDE.md"
-        local git_exclude="$target/.git/info/exclude"
-
-        # Backup and inject .claude directory
-        if [ -d "$target_claude" ]; then
-            mv "$target_claude" "$target_claude.ralph-backup"
-        fi
-        cp -r "$source_claude" "$target_claude"
-        INJECTED_CLAUDE_DIR="$target_claude"
-
-        # Backup and inject CLAUDE.md
-        if [ -f "$target_md" ]; then
-            mv "$target_md" "$target_md.ralph-backup"
-        fi
-        cp "$source_md" "$target_md"
-        INJECTED_CLAUDE_MD="$target_md"
-
-        # Backup and inject .ash directory (ASH configuration + custom Semgrep rules)
-        local source_ash="$SCRIPT_DIR/.ash"
-        local target_ash="$target/.ash"
-        if [ -d "$source_ash" ]; then
-            if [ -d "$target_ash" ]; then
-                mv "$target_ash" "$target_ash.ralph-backup"
-            fi
-            cp -r "$source_ash" "$target_ash"
-            INJECTED_ASH_DIR="$target_ash"
-        fi
-
-        # Add entries to .git/info/exclude (local-only, never committed)
-        # This protects against files being staged if script crashes before cleanup
-        if [ -d "$target/.git/info" ]; then
-            mkdir -p "$target/.git/info"
-            {
-                echo ".claude/ $RALPH_EXCLUDE_MARKER"
-                echo "CLAUDE.md $RALPH_EXCLUDE_MARKER"
-                echo ".claude.ralph-backup/ $RALPH_EXCLUDE_MARKER"
-                echo "CLAUDE.md.ralph-backup $RALPH_EXCLUDE_MARKER"
-                echo ".ash/ $RALPH_EXCLUDE_MARKER"
-                echo ".ash.ralph-backup/ $RALPH_EXCLUDE_MARKER"
-            } >> "$git_exclude"
-            INJECTED_GIT_EXCLUDE="$git_exclude"
-        fi
-
-        # Inject pre-commit hook to prevent committing ralph files
-        # This is the primary defense - automatically unstages injected files before any commit
-        local hook_file="$target/.git/hooks/pre-commit"
-        if [ -d "$target/.git/hooks" ]; then
-            # Backup existing hook if present
-            if [ -f "$hook_file" ]; then
-                cp "$hook_file" "$hook_file.ralph-backup"
-            fi
-
-            cat > "$hook_file" << 'HOOK'
-#!/bin/bash
-# Ralph Loop: Auto-unstage injected files before commit
-# This prevents accidentally committing ralph-loop configuration files
-git reset HEAD -- .claude/ CLAUDE.md .ash/ 2>/dev/null || true
-
-# Run original pre-commit hook if it existed
-if [ -f "$0.ralph-backup" ]; then
-    exec "$0.ralph-backup" "$@"
-fi
-HOOK
-            chmod +x "$hook_file"
-            INJECTED_HOOK="$hook_file"
-        fi
-    }
-
     inject_claude_config "$TARGET_DIR"
 
     cd "$TARGET_DIR"
@@ -811,7 +801,7 @@ HOOK
     # Create temp file for output
     PROGRESS_TMPFILE=$(mktemp)
 
-    if [ "$VERBOSE" = true ]; then
+    if [ "$VERBOSE" = "true" ]; then
         # Verbose mode: show raw output (original behavior)
         if [[ "$OSTYPE" == "darwin"* ]]; then
             script -q /dev/null claude --dangerously-skip-permissions \
