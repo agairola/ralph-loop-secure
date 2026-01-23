@@ -14,8 +14,6 @@ PRD → Claude Code → Implement → Security Scan → PASS? → Commit → Nex
                                      FAIL → Fix → Retry (3x) → Escalate
 ```
 
-## The Philosophy
-
 **"AFK (Away From Keyboard) movement"** - run this, walk away, come back to secure code.
 
 The name "Ralph Wiggum Loop" is intentionally ironic. Ralph Wiggum (from The Simpsons) is famously oblivious to danger. This system is the opposite: it's **hyper-aware** of security issues, so you don't have to be.
