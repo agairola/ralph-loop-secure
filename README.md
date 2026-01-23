@@ -182,7 +182,7 @@ Create your PRD at `state/{project}/prd.json` (auto-initialized from `prd.json.e
 ## Directory Structure
 
 ```
-ralph-loop-secure/
+securing-ralph-loop/
 ├── ralph-secure.sh              # Main orchestrator
 ├── prompt.md                    # Base instructions for Claude
 ├── prd.json.example             # PRD template

@@ -12,7 +12,7 @@ STATE_DIR="${RALPH_PROJECT_STATE_DIR:-$PROJECT_DIR/state}"
 PROJECT_NAME="${RALPH_PROJECT_NAME:-unknown}"
 AUDIT_LOG="$STATE_DIR/security-audit.jsonl"
 
-# Target directory for git operations (fixes bug: was using ralph-loop-secure instead of target)
+# Target directory for git operations (fixes bug: was using securing-ralph-loop instead of target)
 TARGET_DIR="${RALPH_TARGET_DIR:-$(pwd)}"
 
 # Ensure state directory exists
@@ -30,7 +30,7 @@ TRANSCRIPT_PATH="${7:-}"
 # Get timestamp
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Get git info from TARGET directory (not from ralph-loop-secure!)
+# Get git info from TARGET directory (not from securing-ralph-loop!)
 GIT_BRANCH=$(cd "$TARGET_DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 GIT_COMMIT=$(cd "$TARGET_DIR" && git rev-parse HEAD 2>/dev/null || echo "unknown")
 GIT_COMMIT_SHORT=$(cd "$TARGET_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")

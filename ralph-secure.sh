@@ -116,7 +116,7 @@ VERBOSE=false
 MAGENTA='\033[0;35m'
 
 # Marker for entries we add to .git/info/exclude
-RALPH_EXCLUDE_MARKER="# ralph-loop-secure injected (auto-removed)"
+RALPH_EXCLUDE_MARKER="# securing-ralph-loop injected (auto-removed)"
 
 # Cleanup function - runs on exit, interrupt, or termination
 cleanup_injected_files() {

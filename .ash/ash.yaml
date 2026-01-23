@@ -4,7 +4,7 @@
 # https://github.com/awslabs/automated-security-helper
 #
 
-project_name: ralph-loop-secure
+project_name: securing-ralph-loop
 
 global_settings:
   # CRITICAL = only critical findings fail
