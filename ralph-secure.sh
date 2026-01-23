@@ -902,6 +902,12 @@ HOOK
             break
         fi
         log_label "Remaining" "$INCOMPLETE stories"
+
+        # Check if this is the last iteration with incomplete stories
+        if [ "$i" = "$MAX_ITERATIONS" ] && [ "$INCOMPLETE" != "0" ]; then
+            log_error "Escalation" "Max iterations ($MAX_ITERATIONS) reached with $INCOMPLETE stories incomplete"
+            "$SCRIPT_DIR/scripts/escalate.sh" "$i" "MAX_ITERATIONS_REACHED"
+        fi
     fi
 
 done
@@ -960,6 +966,15 @@ if [ -f "$BASELINE_FILE" ]; then
 
     # Report pre-existing vulnerabilities (create GitHub issues if enabled)
     report_preexisting_vulnerabilities "$PREEXISTING_REPORT"
+fi
+
+# Final escalation check - catch any edge cases
+FINAL_INCOMPLETE=$(jq '[.userStories[] | select(.passes == false or .passes == null)] | length' \
+    "$PROJECT_STATE_DIR/prd.json" 2>/dev/null || echo "0")
+
+if [ "$FINAL_INCOMPLETE" != "0" ] && [ "${ALL_STORIES_COMPLETE:-false}" != "true" ]; then
+    log_warn "Escalation" "$FINAL_INCOMPLETE stories remain incomplete - triggering escalation"
+    "$SCRIPT_DIR/scripts/escalate.sh" "$MAX_ITERATIONS" "INCOMPLETE_AT_EXIT"
 fi
 
 # ----------------------------------------

@@ -4,7 +4,7 @@ Security-hardened orchestration shell script that spawns Claude Code instances w
 
 ## Overview
 
-Securing Ralph Loop is an **external orchestrator** that runs Claude Code with automated security scanning. Security validation happens **outside** Claude Code using external tools (Semgrep, Snyk) on the HOST machine.
+Securing Ralph Loop is an **external orchestrator** that runs Claude Code with automated security scanning. Security validation happens **inside** Claude Code sessions via the `/security-scan` skill, using ASH (Automated Security Helper) which bundles Semgrep, Grype, and other scanners.
 
 ```
 HOST MACHINE (ralph-secure.sh orchestrator)
@@ -13,7 +13,7 @@ HOST MACHINE (ralph-secure.sh orchestrator)
 │
 ├─► Spawn Claude Code (implements story)
 │
-├─► External security scan (Semgrep, Snyk)
+├─► Internal security scan via /security-scan skill
 │
 ├─► Decision gate
 │   ├─► PASS → next iteration
@@ -28,7 +28,6 @@ HOST MACHINE (ralph-secure.sh orchestrator)
 ```bash
 # 1. Install dependencies
 pip install semgrep
-npm install -g snyk && snyk auth
 brew install jq
 
 # 2. Run the loop (PRD is auto-initialized from template)
@@ -40,11 +39,9 @@ brew install jq
 
 | Tool | Required | Installation |
 |------|----------|--------------|
-| Docker Desktop 4.50+ | Yes | [Download](https://www.docker.com/products/docker-desktop/) |
 | Claude Code CLI | Yes | `npm install -g @anthropic-ai/claude-code` |
-| Semgrep | Yes | `pip install semgrep` or `brew install semgrep` |
+| uv | Yes | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | jq | Yes | `brew install jq` |
-| Snyk | Optional | `npm install -g snyk && snyk auth` |
 
 ## Usage
 
@@ -62,8 +59,6 @@ brew install jq
 # Short form
 ./ralph-secure.sh -p my-app -t /path/to/project -m 10
 
-# Skip Docker sandbox (for testing)
-RALPH_SKIP_DOCKER=true ./ralph-secure.sh
 ```
 
 ### Multi-Project Support
@@ -95,7 +90,6 @@ Each project gets its own:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RALPH_MAX_RETRIES` | Max remediation attempts per failure | 3 |
-| `RALPH_SKIP_DOCKER` | Run without Docker sandbox | false |
 | `RALPH_SLACK_WEBHOOK` | Slack webhook for notifications | - |
 | `RALPH_CREATE_ISSUE` | Create GitHub issue on escalation | false |
 
@@ -111,7 +105,7 @@ The following are exported for child scripts:
 ### 1. Pre-flight Checks
 
 Before starting, the orchestrator validates:
-- Required tools are installed (Docker, Claude, Semgrep, jq)
+- Required tools are installed (Claude CLI, uv, jq)
 - PRD file exists and is valid JSON
 - Git repository is initialized
 
@@ -119,15 +113,16 @@ Before starting, the orchestrator validates:
 
 Each iteration:
 1. Builds a prompt from `prompt.md` (+ any security context)
-2. Spawns Claude Code in a Docker sandbox
+2. Spawns Claude Code with injected security skills
 3. Claude implements one user story from the PRD
 4. Commits changes
 
 ### 3. Security Scanning
 
-After each commit, **external** tools scan the changes:
+Before each commit, Claude runs `/security-scan` internally:
+- **ASH (Automated Security Helper)**: Bundles multiple scanners
 - **Semgrep**: Static analysis for code vulnerabilities
-- **Snyk**: Dependency vulnerability scanning
+- **Grype**: Dependency vulnerability scanning (no auth required)
 
 ### 4. Decision Gate
 
@@ -170,10 +165,10 @@ Create your PRD at `state/{project}/prd.json` (auto-initialized from `prd.json.e
 
 | Threat | Mitigation |
 |--------|------------|
-| Malicious code generation | External Semgrep validates all output on HOST |
-| Vulnerable dependencies | External Snyk scans dependency changes on HOST |
+| Malicious code generation | Internal ASH/Semgrep validates code before commit |
+| Vulnerable dependencies | Internal Grype scans dependency vulnerabilities |
 | Secret leakage | Semgrep rules + Claude Code hooks detect secrets |
-| Sandbox escape | Docker isolation + restricted network |
+| Sandbox escape | Command validation hooks + permission whitelist |
 | Runaway execution | Iteration limits + cost caps |
 | Audit gap | Comprehensive JSON Lines logging |
 | Permission creep | Minimal tool allowlist per skill |
@@ -200,17 +195,11 @@ securing-ralph-loop/
 │   └── commands/                # Quick commands
 │
 ├── scripts/                     # HOST-side scripts
-│   ├── pre-flight.sh
-│   ├── run-semgrep.sh
-│   ├── run-snyk.sh
-│   ├── audit-log.sh
-│   ├── rollback.sh
-│   ├── inject-security-context.sh
-│   └── escalate.sh
-│
-├── rules/                       # Scanner config
-│   ├── semgrep-rules.yml
-│   └── .snyk
+│   ├── pre-flight.sh            # Validates prerequisites
+│   ├── audit-log.sh             # Records iteration results
+│   ├── log-progress.sh          # Human-readable progress logging
+│   ├── report-preexisting.sh    # Creates GitHub issues for baseline vulns
+│   └── escalate.sh              # Escalation when max retries exhausted
 │
 ├── config/
 │   └── thresholds.json
@@ -275,9 +264,12 @@ allowed-tools: Read, Edit
 
 ## Troubleshooting
 
-### Pre-flight fails: "Docker daemon not running"
+### Pre-flight fails: "uv not found"
 
-Start Docker Desktop before running the script.
+Install uv:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ### Pre-flight fails: "semgrep not found"
 

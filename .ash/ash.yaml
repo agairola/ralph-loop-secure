@@ -68,6 +68,10 @@ global_settings:
     - path: '**/__tests__/**'
       reason: 'Test directories'
 
+    # Documentation files (contain example code that triggers false positives)
+    - path: '**/*.md'
+      reason: 'Markdown documentation with example code'
+
 scanners:
   # =========================================
   # SAST - Static Application Security Testing
