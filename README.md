@@ -4,7 +4,7 @@ Adding security practices to the Ralph Loop - scan, fix, repeat.
 
 ## The Philosophy
 
-<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right">
+<img src="Docs/images/Ralph_Wiggum_3_transparent.png" alt="Ralph Wiggum with magnifying glass" width="180" align="right" style="border: 2px solid #ccc; border-radius: 8px; padding: 8px; margin-left: 16px;">
 
 **"AFK (Away From Keyboard) movement"** - run this, walk away, come back to secure code.
 
