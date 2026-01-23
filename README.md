@@ -7,46 +7,9 @@ Ralph is an autonomous AI agent loop that runs [Claude Code](https://docs.anthro
 When I saw the Ralph pattern going viral, my security paranoia got the best of me. After wasting way too many tokens, I came up with a simple approach: put security checks in the path for each generation, independent of any external tooling, using open-source scanners. Is it bulletproof? Definitely not. But it's a thought exercise in how we can take traditional DevSecOps practices and let AI follow them while still being functional.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     SECURING RALPH LOOP                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌─────────┐    ┌─────────────┐    ┌──────────────────┐       │
-│   │  PRD    │───▶│ Claude Code │───▶│ Implement Story  │       │
-│   │ Stories │    │  Session    │    │                  │       │
-│   └─────────┘    └─────────────┘    └────────┬─────────┘       │
-│                                              │                  │
-│                                              ▼                  │
-│                                     ┌────────────────┐          │
-│                                     │ /security-scan │          │
-│                                     │ (ASH/Semgrep/  │          │
-│                                     │  Grype/etc)    │          │
-│                                     └───────┬────────┘          │
-│                                             │                   │
-│                         ┌───────────────────┴───────────────┐   │
-│                         │                                   │   │
-│                         ▼                                   ▼   │
-│                   ┌──────────┐                      ┌──────────┐│
-│                   │   PASS   │                      │   FAIL   ││
-│                   │  Commit  │                      │  Fix it  ││
-│                   └────┬─────┘                      └────┬─────┘│
-│                        │                                 │      │
-│                        │                    ┌────────────┘      │
-│                        │                    │ (max 3 retries)   │
-│                        │                    ▼                   │
-│                        │           ┌─────────────────┐          │
-│                        │           │ Still failing?  │          │
-│                        │           │ Escalate to     │          │
-│                        │           │ human (GitHub   │          │
-│                        │           │ issue + Slack)  │          │
-│                        │           └─────────────────┘          │
-│                        ▼                                        │
-│               ┌─────────────────┐                               │
-│               │ Next iteration  │◀──────────────────────────────│
-│               │ or complete     │                               │
-│               └─────────────────┘                               │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+PRD → Claude Code → Implement → Security Scan → PASS? → Commit → Next Story
+                                      ↓
+                                     FAIL → Fix → Retry (3x) → Escalate
 ```
 
 ## The Philosophy
